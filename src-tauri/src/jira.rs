@@ -14,12 +14,40 @@ const ISSUE_FIELDS: [&str; 6] = [
     "summary", "status", "updated", "labels", "assignee", "project",
 ];
 
+/// Cloud uses REST API v3 and an Atlassian API token. Data Center uses REST API
+/// v2 and a personal access token. Missing configs stay on Cloud.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum JiraDeployment {
+    #[default]
+    Cloud,
+    DataCenter,
+}
+
+impl JiraDeployment {
+    fn parse(raw: Option<&str>) -> Result<Self, String> {
+        match raw.unwrap_or("cloud").trim().to_ascii_lowercase().as_str() {
+            "" | "cloud" => Ok(Self::Cloud),
+            "datacenter" => Ok(Self::DataCenter),
+            _ => Err("Jira deployment must be cloud or datacenter".into()),
+        }
+    }
+
+    fn api_base(self) -> &'static str {
+        match self {
+            Self::Cloud => "/rest/api/3",
+            Self::DataCenter => "/rest/api/2",
+        }
+    }
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JiraStatus {
     pub connected: bool,
     pub site: String,
     pub email: String,
+    pub deployment: JiraDeployment,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -27,6 +55,8 @@ struct JiraConfig {
     site: String,
     email: String,
     token: String,
+    #[serde(default)]
+    deployment: JiraDeployment,
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
@@ -121,6 +151,7 @@ pub async fn jira_set_config(
     site: String,
     email: String,
     token: String,
+    deployment: Option<String>,
 ) -> Result<JiraStatus, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let token = token.trim().to_string();
@@ -128,21 +159,33 @@ pub async fn jira_set_config(
             delete_config(&app)?;
             return Ok(status_for(None));
         }
+        if token.chars().any(char::is_control) {
+            return Err("Jira token is invalid".into());
+        }
+        let deployment = JiraDeployment::parse(deployment.as_deref())?;
         let email = email.trim().to_string();
-        if email.is_empty() || !email.contains('@') {
+        if deployment == JiraDeployment::Cloud && (email.is_empty() || !email.contains('@')) {
             return Err("Enter the email address of your Atlassian account".into());
         }
-        let config = JiraConfig {
-            site: normalize_jira_site(&site)?,
+        let mut config = JiraConfig {
+            site: normalize_jira_site(&site, deployment)?,
             email,
             token,
+            deployment,
         };
-        let myself = jira_get(&config, "/rest/api/3/myself")?;
-        if string_field(&myself, "accountId")
-            .unwrap_or_default()
-            .is_empty()
-        {
-            return Err("Jira did not return the current user".into());
+        let myself = jira_get(&config, &format!("{}/myself", deployment.api_base()))?;
+        match deployment {
+            JiraDeployment::Cloud => {
+                if string_field(&myself, "accountId")
+                    .unwrap_or_default()
+                    .is_empty()
+                {
+                    return Err("Jira did not return the current user".into());
+                }
+            }
+            JiraDeployment::DataCenter => {
+                config.email = datacenter_account(&myself)?;
+            }
         }
         write_config(&app, &config)?;
         Ok(status_for(Some(&config)))
@@ -158,7 +201,10 @@ pub async fn jira_list_projects(app: AppHandle) -> Result<Vec<JiraProject>, Stri
         fetch_jira_projects(|start| {
             jira_get(
                 &config,
-                &format!("/rest/api/3/project/search?maxResults=100&orderBy=name&startAt={start}"),
+                &format!(
+                    "{}/project/search?maxResults=100&orderBy=name&startAt={start}",
+                    config.deployment.api_base()
+                ),
             )
         })
     })
@@ -180,11 +226,8 @@ pub async fn jira_list_issues(
         };
         let limit = limit.unwrap_or(DEFAULT_LIMIT).clamp(1, 100);
         let jql = issue_jql(assigned_to_me, &state, &project_ids);
-        let data = jira_post(
-            &config,
-            "/rest/api/3/search/jql",
-            &json!({ "jql": jql, "maxResults": limit, "fields": ISSUE_FIELDS }),
-        )?;
+        let (path, body) = issue_search_request(config.deployment, &jql, limit);
+        let data = jira_post(&config, path, &body)?;
         parse_jira_issues(&data, &config.site)
     })
     .await
@@ -198,9 +241,12 @@ pub async fn jira_issue_details(app: AppHandle, key: String) -> Result<JiraIssue
         let key = require_issue_key(&key)?;
         let data = jira_get(
             &config,
-            &format!("/rest/api/3/issue/{key}?fields=description,reporter,creator,assignee"),
+            &format!(
+                "{}/issue/{key}?fields=description,reporter,creator,assignee",
+                config.deployment.api_base()
+            ),
         )?;
-        parse_jira_issue_details(&data)
+        parse_jira_issue_details(&data, &config.site, config.deployment)
     })
     .await
     .map_err(|error| error.to_string())?
@@ -214,9 +260,12 @@ pub async fn jira_issue_thread(app: AppHandle, key: String) -> Result<JiraIssueT
         // Newest first so a long thread keeps its latest comments; re-sorted below.
         let data = jira_get(
             &config,
-            &format!("/rest/api/3/issue/{key}/comment?maxResults={COMMENT_LIMIT}&orderBy=-created"),
+            &format!(
+                "{}/issue/{key}/comment?maxResults={COMMENT_LIMIT}&orderBy=-created",
+                config.deployment.api_base()
+            ),
         )?;
-        parse_jira_issue_thread(&data, &config.site, key)
+        parse_jira_issue_thread(&data, &config.site, key, config.deployment)
     })
     .await
     .map_err(|error| error.to_string())?
@@ -237,8 +286,8 @@ pub async fn jira_issue_comment(
         }
         let data = jira_post(
             &config,
-            &format!("/rest/api/3/issue/{key}/comment"),
-            &json!({ "body": text_to_adf(body) }),
+            &format!("{}/issue/{key}/comment", config.deployment.api_base()),
+            &comment_request_body(config.deployment, body),
         )?;
         let id = string_field(&data, "id").unwrap_or_default();
         if id.is_empty() {
@@ -257,6 +306,43 @@ fn status_for(config: Option<&JiraConfig>) -> JiraStatus {
         email: config
             .map(|config| config.email.clone())
             .unwrap_or_default(),
+        deployment: config.map(|config| config.deployment).unwrap_or_default(),
+    }
+}
+
+/// Data Center identifies the user by username. `name` is the login; older
+/// responses sometimes only include `key` or `displayName`.
+fn datacenter_account(myself: &Value) -> Result<String, String> {
+    string_field(myself, "name")
+        .filter(|name| !name.is_empty())
+        .or_else(|| string_field(myself, "displayName").filter(|name| !name.is_empty()))
+        .or_else(|| string_field(myself, "key").filter(|name| !name.is_empty()))
+        .ok_or_else(|| "Jira did not return the current user".to_string())
+}
+
+fn issue_search_request(
+    deployment: JiraDeployment,
+    jql: &str,
+    limit: u32,
+) -> (&'static str, Value) {
+    match deployment {
+        // Cloud's enhanced search replaced `/rest/api/3/search`.
+        JiraDeployment::Cloud => (
+            "/rest/api/3/search/jql",
+            json!({ "jql": jql, "maxResults": limit, "fields": ISSUE_FIELDS }),
+        ),
+        JiraDeployment::DataCenter => (
+            "/rest/api/2/search",
+            json!({ "jql": jql, "startAt": 0, "maxResults": limit, "fields": ISSUE_FIELDS }),
+        ),
+    }
+}
+
+fn comment_request_body(deployment: JiraDeployment, body: &str) -> Value {
+    match deployment {
+        JiraDeployment::Cloud => json!({ "body": text_to_adf(body) }),
+        // Data Center stores comments as wiki markup. Plain text is valid wiki.
+        JiraDeployment::DataCenter => json!({ "body": body }),
     }
 }
 
@@ -285,12 +371,17 @@ fn issue_jql(assigned_to_me: bool, state: &str, project_ids: &[String]) -> Strin
 }
 
 fn jira_authorization(config: &JiraConfig) -> String {
-    let encoded = base64::engine::general_purpose::STANDARD.encode(format!(
-        "{}:{}",
-        config.email.trim(),
-        config.token.trim()
-    ));
-    format!("Basic {encoded}")
+    match config.deployment {
+        JiraDeployment::DataCenter => format!("Bearer {}", config.token.trim()),
+        JiraDeployment::Cloud => {
+            let encoded = base64::engine::general_purpose::STANDARD.encode(format!(
+                "{}:{}",
+                config.email.trim(),
+                config.token.trim()
+            ));
+            format!("Basic {encoded}")
+        }
+    }
 }
 
 fn jira_get(config: &JiraConfig, path: &str) -> Result<Value, String> {
@@ -300,7 +391,7 @@ fn jira_get(config: &JiraConfig, path: &str) -> Result<Value, String> {
         .set("Authorization", &jira_authorization(config))
         .set("Accept", "application/json")
         .call();
-    read_jira_response(result)
+    read_jira_response(config.deployment, result)
 }
 
 fn jira_post(config: &JiraConfig, path: &str, body: &Value) -> Result<Value, String> {
@@ -312,18 +403,19 @@ fn jira_post(config: &JiraConfig, path: &str, body: &Value) -> Result<Value, Str
         .set("Accept", "application/json")
         .set("Content-Type", "application/json")
         .send_string(&payload);
-    read_jira_response(result)
+    read_jira_response(config.deployment, result)
 }
 
-fn read_jira_response(result: Result<ureq::Response, ureq::Error>) -> Result<Value, String> {
+fn read_jira_response(
+    deployment: JiraDeployment,
+    result: Result<ureq::Response, ureq::Error>,
+) -> Result<Value, String> {
     let response = match result {
         Ok(response) => response,
-        Err(ureq::Error::Status(401, _)) => {
-            return Err("Jira email or API token is invalid".into());
-        }
+        Err(ureq::Error::Status(401, _)) => return Err(unauthorized_message(deployment)),
         Err(ureq::Error::Status(status, response)) => {
             let body = response.into_string().unwrap_or_default();
-            return Err(jira_http_error(status, &body));
+            return Err(jira_http_error(deployment, status, &body));
         }
         Err(_) => return Err("Could not reach Jira".into()),
     };
@@ -332,17 +424,29 @@ fn read_jira_response(result: Result<ureq::Response, ureq::Error>) -> Result<Val
         .into_string()
         .map_err(|_| "Jira returned an unreadable response".to_string())?;
     if !(200..300).contains(&status) {
-        return Err(jira_http_error(status, &body));
+        return Err(jira_http_error(deployment, status, &body));
     }
     serde_json::from_str(&body).map_err(|_| "Jira returned invalid JSON".to_string())
 }
 
-fn jira_http_error(status: u16, body: &str) -> String {
+fn unauthorized_message(deployment: JiraDeployment) -> String {
+    match deployment {
+        JiraDeployment::Cloud => "Jira email or API token is invalid".into(),
+        JiraDeployment::DataCenter => "Jira personal access token is invalid".into(),
+    }
+}
+
+fn jira_http_error(deployment: JiraDeployment, status: u16, body: &str) -> String {
     if let Some(message) = jira_error_message(body) {
         return message;
     }
     match status {
-        403 => "Jira denied access. Check the API token's permissions".into(),
+        403 => match deployment {
+            JiraDeployment::Cloud => "Jira denied access. Check the API token's permissions".into(),
+            JiraDeployment::DataCenter => {
+                "Jira denied access. Check the personal access token's permissions".into()
+            }
+        },
         404 => "Jira could not find that issue".into(),
         _ => format!("Jira request failed ({status})"),
     }
@@ -449,7 +553,7 @@ fn parse_jira_issue(node: &Value, site: &str) -> Option<JiraIssue> {
                 .collect()
         })
         .unwrap_or_default();
-    let (assignee, avatar_url) = person_fields(fields.get("assignee"));
+    let (assignee, avatar_url) = person_fields(fields.get("assignee"), site);
     Some(JiraIssue {
         provider: "jira".into(),
         kind: "jira".into(),
@@ -485,23 +589,32 @@ fn parse_jira_issue(node: &Value, site: &str) -> Option<JiraIssue> {
     })
 }
 
-fn parse_jira_issue_details(data: &Value) -> Result<JiraIssueDetails, String> {
+fn parse_jira_issue_details(
+    data: &Value,
+    site: &str,
+    deployment: JiraDeployment,
+) -> Result<JiraIssueDetails, String> {
     let fields = data
         .get("fields")
         .ok_or_else(|| "Jira did not return that issue".to_string())?;
     let (author, author_avatar_url) = [fields.get("reporter"), fields.get("creator")]
         .into_iter()
-        .map(person_fields)
+        .map(|person| person_fields(person, site))
         .find(|(name, _)| name.is_some())
-        .unwrap_or_else(|| person_fields(fields.get("assignee")));
+        .unwrap_or_else(|| person_fields(fields.get("assignee"), site));
     Ok(JiraIssueDetails {
-        body: rich_text(fields.get("description")),
+        body: rich_text(fields.get("description"), deployment),
         author: author.unwrap_or_default(),
         author_avatar_url,
     })
 }
 
-fn parse_jira_issue_thread(data: &Value, site: &str, key: &str) -> Result<JiraIssueThread, String> {
+fn parse_jira_issue_thread(
+    data: &Value,
+    site: &str,
+    key: &str,
+    deployment: JiraDeployment,
+) -> Result<JiraIssueThread, String> {
     let comments = data
         .get("comments")
         .and_then(Value::as_array)
@@ -512,7 +625,7 @@ fn parse_jira_issue_thread(data: &Value, site: &str, key: &str) -> Result<JiraIs
         .unwrap_or(comments.len() as u64);
     let mut parsed: Vec<JiraIssueComment> = comments
         .iter()
-        .filter_map(|comment| parse_jira_comment(comment, site, key))
+        .filter_map(|comment| parse_jira_comment(comment, site, key, deployment))
         .collect();
     parsed.sort_by(|left, right| left.created_at.cmp(&right.created_at));
     Ok(JiraIssueThread {
@@ -524,15 +637,20 @@ fn parse_jira_issue_thread(data: &Value, site: &str, key: &str) -> Result<JiraIs
     })
 }
 
-fn parse_jira_comment(node: &Value, site: &str, key: &str) -> Option<JiraIssueComment> {
+fn parse_jira_comment(
+    node: &Value,
+    site: &str,
+    key: &str,
+    deployment: JiraDeployment,
+) -> Option<JiraIssueComment> {
     let id = string_field(node, "id").filter(|id| !id.is_empty())?;
-    let (author, author_avatar_url) = person_fields(node.get("author"));
+    let (author, author_avatar_url) = person_fields(node.get("author"), site);
     Some(JiraIssueComment {
         url: comment_url(site, key, &id),
         kind: "comment".into(),
         author: author.unwrap_or_default(),
         author_avatar_url,
-        body: rich_text(node.get("body")),
+        body: rich_text(node.get("body"), deployment),
         created_at: normalize_jira_time(&string_field(node, "created").unwrap_or_default()),
         state: String::new(),
         path: String::new(),
@@ -582,17 +700,30 @@ fn require_issue_key(key: &str) -> Result<&str, String> {
     }
 }
 
-fn person_fields(node: Option<&Value>) -> (Option<String>, String) {
+fn person_fields(node: Option<&Value>, site: &str) -> (Option<String>, String) {
     let Some(node) = node.filter(|node| node.is_object()) else {
         return (None, String::new());
     };
+    let avatar = node
+        .pointer("/avatarUrls/48x48")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
     (
         string_field(node, "displayName").filter(|name| !name.is_empty()),
-        node.pointer("/avatarUrls/48x48")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string(),
+        absolute_asset_url(site, avatar),
     )
+}
+
+fn absolute_asset_url(site: &str, url: &str) -> String {
+    let url = url.trim();
+    if url.is_empty() || url.contains("://") {
+        return url.to_string();
+    }
+    if let Some(host) = url.strip_prefix("//") {
+        return format!("https://{host}");
+    }
+    let path = url.trim_start_matches('/');
+    format!("{site}/{path}")
 }
 
 fn string_field(value: &Value, key: &str) -> Option<String> {
@@ -604,9 +735,13 @@ fn string_field(value: &Value, key: &str) -> Option<String> {
 
 // ---- Atlassian Document Format ----
 
-/// Descriptions and comments arrive as ADF (v3) or plain text; the Inbox renders markdown.
-fn rich_text(value: Option<&Value>) -> String {
+/// Cloud sends Atlassian Document Format. Data Center sends wiki markup. The
+/// inbox renders Markdown either way.
+fn rich_text(value: Option<&Value>, deployment: JiraDeployment) -> String {
     match value {
+        Some(Value::String(text)) if deployment == JiraDeployment::DataCenter => {
+            wiki_to_markdown(text)
+        }
         Some(Value::String(text)) => text.trim().to_string(),
         Some(doc @ Value::Object(_)) => adf_to_markdown(doc),
         _ => String::new(),
@@ -849,37 +984,545 @@ fn text_to_adf(text: &str) -> Value {
     json!({ "type": "doc", "version": 1, "content": paragraphs })
 }
 
+// ---- Jira wiki markup (Data Center) ----
+
+fn wiki_to_markdown(input: &str) -> String {
+    let text = input.replace("\r\n", "\n").replace('\r', "\n");
+    let mut blocks = Vec::new();
+    let mut cursor = 0;
+    while cursor < text.len() {
+        if let Some(at) = next_wiki_macro(&text, cursor) {
+            push_wiki_plain(&mut blocks, &text[cursor..at]);
+            if let Some((rendered, next)) = take_wiki_macro(&text, at) {
+                if !rendered.trim().is_empty() {
+                    blocks.push(rendered);
+                }
+                cursor = next;
+                continue;
+            }
+            push_wiki_plain(&mut blocks, &text[at..at + 1]);
+            cursor = at + 1;
+            continue;
+        }
+        push_wiki_plain(&mut blocks, &text[cursor..]);
+        break;
+    }
+    blocks.join("\n\n").trim().to_string()
+}
+
+fn push_wiki_plain(blocks: &mut Vec<String>, text: &str) {
+    let rendered = wiki_lines_to_markdown(text);
+    if !rendered.trim().is_empty() {
+        blocks.push(rendered);
+    }
+}
+
+fn next_wiki_macro(text: &str, from: usize) -> Option<usize> {
+    let lower = text[from..].to_ascii_lowercase();
+    let mut best = None;
+    for name in ["code", "noformat", "quote", "panel"] {
+        let needle = format!("{{{name}");
+        let mut search = 0;
+        while let Some(rel) = lower[search..].find(&needle) {
+            let index = from + search + rel;
+            if wiki_macro_opener(&text[index..], name).is_some() {
+                best = Some(best.map_or(index, |current: usize| current.min(index)));
+                break;
+            }
+            search += rel + 1;
+        }
+    }
+    best
+}
+
+/// Byte index of the opener's closing `}`, when `text` starts with `{name`.
+fn wiki_macro_opener(text: &str, name: &str) -> Option<usize> {
+    let lower = text.to_ascii_lowercase();
+    let open = format!("{{{name}");
+    if !lower.starts_with(&open) {
+        return None;
+    }
+    let after = open.len();
+    if !matches!(lower.as_bytes().get(after), Some(b'}' | b':' | b'|') | None) {
+        return None;
+    }
+    let end = text.find('}')?;
+    if end < after {
+        return None;
+    }
+    Some(end)
+}
+
+fn take_wiki_macro(text: &str, at: usize) -> Option<(String, usize)> {
+    let slice = &text[at..];
+    let kind = ["code", "noformat", "quote", "panel"]
+        .into_iter()
+        .find(|name| wiki_macro_opener(slice, name).is_some())?;
+    let opener_end = wiki_macro_opener(slice, kind)?;
+    let header = &slice[1..opener_end];
+    let mut body_start = at + opener_end + 1;
+    if text[body_start..].starts_with('\n') {
+        body_start += 1;
+    }
+    let close = format!("{{{kind}}}");
+    let rel = text[body_start..].to_ascii_lowercase().find(&close)?;
+    let body = &text[body_start..body_start + rel];
+    let next = body_start + rel + close.len();
+    let rendered = if kind == "code" || kind == "noformat" {
+        let lang = wiki_code_lang(header, kind);
+        format!("```{lang}\n{}\n```", body.trim_end_matches('\n'))
+    } else {
+        wiki_lines_to_markdown(body)
+            .lines()
+            .map(|line| format!("> {line}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    Some((rendered, next))
+}
+
+fn wiki_code_lang(header: &str, kind: &str) -> String {
+    if kind != "code" {
+        return String::new();
+    }
+    let header = header.to_ascii_lowercase();
+    let rest = header[kind.len()..].trim_start_matches([':', '|']);
+    let token = rest.split(['|', ' ']).next().unwrap_or("").trim();
+    if token.is_empty()
+        || token.contains('=')
+        || !token
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '+'))
+    {
+        String::new()
+    } else {
+        token.to_string()
+    }
+}
+
+fn wiki_lines_to_markdown(text: &str) -> String {
+    let mut lines = text.split('\n').peekable();
+    let mut blocks = Vec::new();
+    let mut paragraph = Vec::new();
+    let flush = |paragraph: &mut Vec<String>, blocks: &mut Vec<String>| {
+        if paragraph.is_empty() {
+            return;
+        }
+        let rendered = paragraph
+            .iter()
+            .map(|line| wiki_inline(line))
+            .collect::<Vec<_>>()
+            .join("\n");
+        if !rendered.trim().is_empty() {
+            blocks.push(rendered);
+        }
+        paragraph.clear();
+    };
+    while let Some(line) = lines.next() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            flush(&mut paragraph, &mut blocks);
+            continue;
+        }
+        if let Some(heading) = wiki_heading(trimmed) {
+            flush(&mut paragraph, &mut blocks);
+            blocks.push(heading);
+            continue;
+        }
+        if trimmed.chars().all(|ch| ch == '-') && trimmed.len() >= 4 {
+            flush(&mut paragraph, &mut blocks);
+            blocks.push("---".into());
+            continue;
+        }
+        if wiki_table_line(trimmed) {
+            flush(&mut paragraph, &mut blocks);
+            let mut table = vec![trimmed.to_string()];
+            while lines
+                .peek()
+                .is_some_and(|next| wiki_table_line(next.trim()))
+            {
+                table.push(lines.next().unwrap_or_default().trim().to_string());
+            }
+            blocks.push(wiki_table(&table));
+            continue;
+        }
+        if let Some(item) = wiki_list_item(trimmed) {
+            flush(&mut paragraph, &mut blocks);
+            let mut items = vec![item];
+            while let Some(next) = lines.peek().and_then(|next| wiki_list_item(next.trim())) {
+                items.push(next);
+                lines.next();
+            }
+            blocks.push(wiki_list(&items));
+            continue;
+        }
+        if let Some(quote) = trimmed
+            .get(..4)
+            .filter(|prefix| prefix.eq_ignore_ascii_case("bq. "))
+            .map(|_| &trimmed[4..])
+        {
+            flush(&mut paragraph, &mut blocks);
+            blocks.push(format!("> {}", wiki_inline(quote.trim())));
+            continue;
+        }
+        paragraph.push(trimmed.to_string());
+    }
+    flush(&mut paragraph, &mut blocks);
+    blocks.join("\n\n")
+}
+
+fn wiki_heading(line: &str) -> Option<String> {
+    let lower = line.to_ascii_lowercase();
+    for level in 1..=6 {
+        let prefix = format!("h{level}. ");
+        if lower.starts_with(&prefix) {
+            return Some(format!(
+                "{} {}",
+                "#".repeat(level),
+                wiki_inline(line[prefix.len()..].trim())
+            ));
+        }
+    }
+    None
+}
+
+fn wiki_table_line(line: &str) -> bool {
+    let line = line.trim();
+    line.starts_with('|') && line.ends_with('|') && line.len() > 1
+}
+
+fn wiki_table(lines: &[String]) -> String {
+    let rows: Vec<Vec<String>> = lines
+        .iter()
+        .map(|line| wiki_cells(line.trim()))
+        .filter(|row| !row.is_empty())
+        .collect();
+    let Some(width) = rows.iter().map(Vec::len).max() else {
+        return String::new();
+    };
+    let line = |cells: &[String]| {
+        let mut padded = cells.to_vec();
+        padded.resize(width, String::new());
+        format!("| {} |", padded.join(" | "))
+    };
+    let mut lines = vec![line(&rows[0]), format!("|{}", " --- |".repeat(width))];
+    lines.extend(rows[1..].iter().map(|row| line(row)));
+    lines.join("\n")
+}
+
+fn wiki_cells(line: &str) -> Vec<String> {
+    let header = line.starts_with("||");
+    let separator = if header { "||" } else { "|" };
+    line.trim_matches('|')
+        .split(separator)
+        .map(|cell| wiki_inline(cell.trim()).replace('|', "\\|"))
+        .collect()
+}
+
+struct WikiListItem {
+    depth: usize,
+    ordered: bool,
+    text: String,
+}
+
+fn wiki_list_item(line: &str) -> Option<WikiListItem> {
+    let bytes = line.as_bytes();
+    let mut depth = 0;
+    while depth < bytes.len() && matches!(bytes[depth], b'*' | b'#') {
+        depth += 1;
+    }
+    if depth == 0 || bytes.get(depth) != Some(&b' ') {
+        return None;
+    }
+    let marker = &line[..depth];
+    Some(WikiListItem {
+        ordered: marker.contains('#'),
+        text: line[depth + 1..].trim().to_string(),
+        depth,
+    })
+}
+
+fn wiki_list(items: &[WikiListItem]) -> String {
+    items
+        .iter()
+        .map(|item| {
+            let indent = "  ".repeat(item.depth.saturating_sub(1));
+            let marker = if item.ordered { "1. " } else { "- " };
+            format!("{indent}{marker}{}", wiki_inline(&item.text))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn wiki_inline(input: &str) -> String {
+    let mut out = String::new();
+    let mut index = 0;
+    while index < input.len() {
+        let rest = &input[index..];
+        let prev = input[..index].chars().next_back();
+        if let Some(rendered) = wiki_break(rest) {
+            out.push('\n');
+            index += rendered;
+            continue;
+        }
+        if let Some(ch) = wiki_escape(rest) {
+            out.push(ch);
+            index += 1 + ch.len_utf8();
+            continue;
+        }
+        if let Some(skip) = wiki_color_tag(rest) {
+            index += skip;
+            continue;
+        }
+        if let Some((content, len)) = wiki_delimited(rest, "{{", "}}") {
+            out.push('`');
+            out.push_str(content);
+            out.push('`');
+            index += len;
+            continue;
+        }
+        if let Some((rendered, len)) = wiki_image(rest) {
+            out.push_str(&rendered);
+            index += len;
+            continue;
+        }
+        if let Some((rendered, len)) = wiki_link(rest) {
+            out.push_str(&rendered);
+            index += len;
+            continue;
+        }
+        if let Some((content, len)) = wiki_emphasis(rest, '*', prev) {
+            out.push_str("**");
+            out.push_str(&wiki_inline(content));
+            out.push_str("**");
+            index += len;
+            continue;
+        }
+        if let Some((content, len)) = wiki_emphasis(rest, '_', prev) {
+            out.push('_');
+            out.push_str(&wiki_inline(content));
+            out.push('_');
+            index += len;
+            continue;
+        }
+        let ch = rest.chars().next().unwrap_or_default();
+        out.push(ch);
+        index += ch.len_utf8();
+    }
+    out
+}
+
+fn wiki_break(input: &str) -> Option<usize> {
+    input.starts_with("\\\\").then_some(2)
+}
+
+fn wiki_escape(input: &str) -> Option<char> {
+    let mut chars = input.chars();
+    if chars.next() != Some('\\') {
+        return None;
+    }
+    chars.next()
+}
+
+fn wiki_color_tag(input: &str) -> Option<usize> {
+    let lower = input.to_ascii_lowercase();
+    if !lower.starts_with("{color") {
+        return None;
+    }
+    let after = "{color".len();
+    if !matches!(lower.as_bytes().get(after), Some(b'}' | b':' | b'|')) {
+        return None;
+    }
+    Some(input.find('}')? + 1)
+}
+
+fn wiki_delimited<'a>(input: &'a str, open: &str, close: &str) -> Option<(&'a str, usize)> {
+    if !input.starts_with(open) {
+        return None;
+    }
+    let rest = &input[open.len()..];
+    let end = rest.find(close)?;
+    let content = &rest[..end];
+    if content.is_empty() || content.contains('\n') {
+        return None;
+    }
+    Some((content, open.len() + end + close.len()))
+}
+
+fn wiki_image(input: &str) -> Option<(String, usize)> {
+    let (content, len) = wiki_delimited(input, "!", "!")?;
+    if content.contains(' ') {
+        return None;
+    }
+    let source = content.split('|').next().unwrap_or(content).trim();
+    if source.is_empty() {
+        return None;
+    }
+    let rendered = if looks_like_url(source) {
+        format!("![]({source})")
+    } else {
+        source.to_string()
+    };
+    Some((rendered, len))
+}
+
+fn wiki_link(input: &str) -> Option<(String, usize)> {
+    let (content, len) = wiki_delimited(input, "[", "]")?;
+    if content.contains('[') {
+        return None;
+    }
+    if let Some(user) = content.strip_prefix('~') {
+        let valid = !user.is_empty()
+            && !user.contains('|')
+            && user
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '_'));
+        if valid {
+            return Some((format!("@{user}"), len));
+        }
+    }
+    if let Some((text, url)) = content.split_once('|') {
+        let text = text.trim();
+        let url = url.trim();
+        if text.is_empty() || url.is_empty() {
+            return None;
+        }
+        return Some((format!("[{text}]({url})"), len));
+    }
+    if looks_like_url(content) {
+        return Some((format!("<{content}>"), len));
+    }
+    None
+}
+
+fn looks_like_url(value: &str) -> bool {
+    let value = value.to_ascii_lowercase();
+    value.starts_with("https://")
+        || value.starts_with("http://")
+        || value.starts_with("mailto:")
+        || value.starts_with("www.")
+}
+
+fn wiki_emphasis(input: &str, marker: char, prev: Option<char>) -> Option<(&str, usize)> {
+    if !wiki_boundary(prev) || !input.starts_with(marker) {
+        return None;
+    }
+    let rest = &input[marker.len_utf8()..];
+    if rest.starts_with(marker) {
+        return None;
+    }
+    let end = rest.find(marker)?;
+    let content = &rest[..end];
+    if content.is_empty()
+        || content.contains('\n')
+        || content.contains(marker)
+        || content.starts_with(' ')
+        || content.ends_with(' ')
+    {
+        return None;
+    }
+    let after = &rest[end + marker.len_utf8()..];
+    if after.starts_with(marker) || !wiki_boundary(after.chars().next()) {
+        return None;
+    }
+    Some((content, marker.len_utf8() + end + marker.len_utf8()))
+}
+
+fn wiki_boundary(ch: Option<char>) -> bool {
+    ch.is_none_or(|ch| !ch.is_ascii_alphanumeric())
+}
+
 // ---- Config storage ----
 
-fn normalize_jira_site(raw: &str) -> Result<String, String> {
+fn normalize_jira_site(raw: &str, deployment: JiraDeployment) -> Result<String, String> {
     let raw = raw.trim().trim_end_matches('/');
     if raw.is_empty() {
-        return Err("Enter your Jira site (e.g. yourteam.atlassian.net)".into());
+        return Err(match deployment {
+            JiraDeployment::Cloud => "Enter your Jira site (e.g. yourteam.atlassian.net)".into(),
+            JiraDeployment::DataCenter => {
+                "Enter your Jira Data Center URL (e.g. jira.example.com)".into()
+            }
+        });
     }
-    // Bare `yourteam` becomes the Atlassian Cloud site.
+    // Bare `yourteam` is an Atlassian Cloud site. Data Center keeps the host,
+    // including a context path such as `/jira`.
     let with_scheme = if raw.contains("://") {
         raw.to_string()
-    } else if raw.contains('.') {
-        format!("https://{raw}")
-    } else {
+    } else if deployment == JiraDeployment::Cloud
+        && !raw.contains('.')
+        && !raw.contains('/')
+        && !raw.contains(':')
+    {
         format!("https://{raw}.atlassian.net")
+    } else {
+        format!("https://{raw}")
     };
     let url = url::Url::parse(&with_scheme).map_err(|_| "Jira site is invalid".to_string())?;
-    // The API token travels on every request as Basic auth.
+    // Credentials travel on every request. Never accept them in the URL.
     if url.scheme() != "https" {
         return Err("Jira site must use HTTPS".into());
     }
     if !url.username().is_empty() || url.password().is_some() {
         return Err("Jira site is invalid".into());
     }
-    let host = url
-        .host_str()
-        .filter(|host| !host.is_empty())
-        .ok_or_else(|| "Jira site is invalid".to_string())?;
-    Ok(match url.port() {
-        Some(port) => format!("https://{}:{port}", host.to_ascii_lowercase()),
-        None => format!("https://{}", host.to_ascii_lowercase()),
-    })
+    let host = jira_origin_host(&url);
+    if host.is_empty() {
+        return Err("Jira site is invalid".into());
+    }
+    let port = url
+        .port()
+        .map(|port| format!(":{port}"))
+        .unwrap_or_default();
+    let path = match deployment {
+        JiraDeployment::Cloud => String::new(),
+        JiraDeployment::DataCenter => datacenter_context_path(url.path()).to_string(),
+    };
+    Ok(format!("https://{host}{port}{path}"))
+}
+
+fn jira_origin_host(url: &url::Url) -> String {
+    match url.host() {
+        Some(url::Host::Domain(domain)) => domain.to_ascii_lowercase(),
+        Some(url::Host::Ipv4(ip)) => ip.to_string(),
+        Some(url::Host::Ipv6(ip)) => format!("[{ip}]"),
+        None => String::new(),
+    }
+}
+
+/// Keep `/jira` and drop a pasted page such as `/jira/browse/ENG-1`.
+fn datacenter_context_path(path: &str) -> &str {
+    let trimmed = path.trim_end_matches('/');
+    if trimmed.is_empty() {
+        return "";
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    let mut cut = None;
+    for marker in [
+        "/rest",
+        "/browse",
+        "/secure",
+        "/projects",
+        "/issues",
+        "/plugins",
+        "/login.jsp",
+    ] {
+        let mut start = 0;
+        while let Some(rel) = lower[start..].find(marker) {
+            let index = start + rel;
+            let after = index + marker.len();
+            let boundary = after == lower.len() || lower.as_bytes()[after] == b'/';
+            if boundary {
+                cut = Some(cut.map_or(index, |current: usize| current.min(index)));
+                break;
+            }
+            start = index + 1;
+        }
+    }
+    match cut {
+        Some(0) => "",
+        Some(index) => trimmed[..index].trim_end_matches('/'),
+        None => trimmed,
+    }
 }
 
 fn config_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -896,10 +1539,12 @@ fn read_config(app: &AppHandle) -> Result<Option<JiraConfig>, String> {
         Ok(raw) => {
             let mut config: JiraConfig =
                 serde_json::from_str(&raw).map_err(|_| "Jira settings are invalid".to_string())?;
-            config.site = normalize_jira_site(&config.site)?;
+            config.site = normalize_jira_site(&config.site, config.deployment)?;
             config.email = config.email.trim().to_string();
             config.token = config.token.trim().to_string();
-            if config.token.is_empty() || config.email.is_empty() {
+            let missing_cloud_account =
+                config.deployment == JiraDeployment::Cloud && config.email.is_empty();
+            if config.token.is_empty() || missing_cloud_account {
                 Ok(None)
             } else {
                 Ok(Some(config))
@@ -991,19 +1636,76 @@ mod tests {
 
     #[test]
     fn normalizes_jira_sites() {
-        assert_eq!(normalize_jira_site("acme").unwrap(), SITE);
-        assert_eq!(normalize_jira_site("acme.atlassian.net").unwrap(), SITE);
         assert_eq!(
-            normalize_jira_site(" https://Acme.atlassian.net/jira/software/projects ").unwrap(),
+            normalize_jira_site("acme", JiraDeployment::Cloud).unwrap(),
             SITE
         );
         assert_eq!(
-            normalize_jira_site("jira.example.com:8443").unwrap(),
+            normalize_jira_site("acme.atlassian.net", JiraDeployment::Cloud).unwrap(),
+            SITE
+        );
+        assert_eq!(
+            normalize_jira_site(
+                " https://Acme.atlassian.net/jira/software/projects ",
+                JiraDeployment::Cloud
+            )
+            .unwrap(),
+            SITE
+        );
+        assert_eq!(
+            normalize_jira_site("jira.example.com:8443", JiraDeployment::Cloud).unwrap(),
             "https://jira.example.com:8443"
         );
-        assert!(normalize_jira_site("http://acme.atlassian.net").is_err());
-        assert!(normalize_jira_site("https://user@acme.atlassian.net").is_err());
-        assert!(normalize_jira_site("").is_err());
+        assert!(normalize_jira_site("http://acme.atlassian.net", JiraDeployment::Cloud).is_err());
+        assert!(
+            normalize_jira_site("https://user@acme.atlassian.net", JiraDeployment::Cloud).is_err()
+        );
+        assert!(normalize_jira_site("", JiraDeployment::Cloud).is_err());
+    }
+
+    #[test]
+    fn datacenter_site_keeps_context_path() {
+        assert_eq!(
+            normalize_jira_site(
+                " https://Jira.Example.com/Jira/browse/ENG-1 ",
+                JiraDeployment::DataCenter
+            )
+            .unwrap(),
+            "https://jira.example.com/Jira"
+        );
+        assert_eq!(
+            normalize_jira_site("jira.example.com:8443/jira", JiraDeployment::DataCenter).unwrap(),
+            "https://jira.example.com:8443/jira"
+        );
+        assert_eq!(
+            normalize_jira_site("acme", JiraDeployment::DataCenter).unwrap(),
+            "https://acme"
+        );
+        assert_eq!(
+            normalize_jira_site(
+                "https://jira.example.com/jira/browser",
+                JiraDeployment::DataCenter
+            )
+            .unwrap(),
+            "https://jira.example.com/jira/browser"
+        );
+        assert!(
+            normalize_jira_site("http://jira.example.com", JiraDeployment::DataCenter).is_err()
+        );
+        assert!(normalize_jira_site(
+            "https://user@jira.example.com/jira",
+            JiraDeployment::DataCenter
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn old_config_defaults_to_cloud() {
+        let config: JiraConfig = serde_json::from_str(
+            r#"{"site":"https://acme.atlassian.net","email":"ada@acme.com","token":"secret"}"#,
+        )
+        .unwrap();
+        assert_eq!(config.deployment, JiraDeployment::Cloud);
     }
 
     #[test]
@@ -1012,11 +1714,51 @@ mod tests {
             site: SITE.into(),
             email: "ada@acme.com".into(),
             token: "secret".into(),
+            deployment: JiraDeployment::Cloud,
         };
         assert_eq!(
             jira_authorization(&config),
             "Basic YWRhQGFjbWUuY29tOnNlY3JldA=="
         );
+    }
+
+    #[test]
+    fn datacenter_authorization_is_bearer() {
+        let config = JiraConfig {
+            site: "https://jira.example.com/jira".into(),
+            email: String::new(),
+            token: "pat-secret".into(),
+            deployment: JiraDeployment::DataCenter,
+        };
+        assert_eq!(jira_authorization(&config), "Bearer pat-secret");
+        assert_eq!(
+            issue_search_request(JiraDeployment::DataCenter, "project = ENG", 40).0,
+            "/rest/api/2/search"
+        );
+        assert_eq!(
+            issue_search_request(JiraDeployment::Cloud, "project = ENG", 40).0,
+            "/rest/api/3/search/jql"
+        );
+        assert_eq!(
+            comment_request_body(JiraDeployment::DataCenter, "Fixed"),
+            json!({ "body": "Fixed" })
+        );
+    }
+
+    #[test]
+    fn datacenter_account_prefers_username() {
+        assert_eq!(
+            datacenter_account(
+                &json!({ "name": "ada", "displayName": "Ada Lovelace", "key": "JIRAUSER1" })
+            )
+            .unwrap(),
+            "ada"
+        );
+        assert_eq!(
+            datacenter_account(&json!({ "displayName": "Ada Lovelace" })).unwrap(),
+            "Ada Lovelace"
+        );
+        assert!(datacenter_account(&json!({})).is_err());
     }
 
     #[test]
@@ -1104,7 +1846,7 @@ mod tests {
                 "assignee": null
             }
         });
-        let details = parse_jira_issue_details(&data).unwrap();
+        let details = parse_jira_issue_details(&data, SITE, JiraDeployment::Cloud).unwrap();
         assert_eq!(details.body, "Steps");
         assert_eq!(details.author, "Ada");
         assert_eq!(details.author_avatar_url, "https://avatar.example/ada.png");
@@ -1129,7 +1871,7 @@ mod tests {
                 }
             ]
         });
-        let thread = parse_jira_issue_thread(&data, SITE, "ENG-42").unwrap();
+        let thread = parse_jira_issue_thread(&data, SITE, "ENG-42", JiraDeployment::Cloud).unwrap();
         assert!(thread.truncated);
         assert_eq!(thread.comments.len(), 2);
         assert_eq!(thread.comments[0].body, "Root");
@@ -1139,6 +1881,61 @@ mod tests {
         );
         assert_eq!(thread.comments[1].author, "Maya");
         assert_eq!(thread.comments[1].body, "Plain reply");
+    }
+
+    #[test]
+    fn datacenter_description_converts_wiki() {
+        let data = json!({
+            "fields": {
+                "description": "h1. Steps\n\n* Check auth\n\n{color:red}blocked{color}",
+                "reporter": {
+                    "displayName": "Ada",
+                    "avatarUrls": { "48x48": "/secure/useravatar?size=large" }
+                }
+            }
+        });
+        let details = parse_jira_issue_details(
+            &data,
+            "https://jira.example.com/jira",
+            JiraDeployment::DataCenter,
+        )
+        .unwrap();
+        assert_eq!(details.body, "# Steps\n\n- Check auth\n\nblocked");
+        assert_eq!(details.author, "Ada");
+        assert_eq!(
+            details.author_avatar_url,
+            "https://jira.example.com/jira/secure/useravatar?size=large"
+        );
+    }
+
+    #[test]
+    fn wiki_markup_becomes_markdown() {
+        let wiki = "\
+h2. Repro\n\
+\n\
+Ping *Maya* and _now_ run {{make}}\n\
+\n\
+* one\n\
+** nested\n\
+* two\n\
+\n\
+{code:sh}\n\
+npm test\n\
+{code}\n\
+\n\
+See [docs|https://example.com] and [~ada]\n\
+\n\
+||A||B||\n\
+|1|2|\n\
+\n\
+{quote}\n\
+quoted\n\
+{quote}\n";
+        assert_eq!(
+            wiki_to_markdown(wiki),
+            "## Repro\n\nPing **Maya** and _now_ run `make`\n\n- one\n  - nested\n- two\n\n```sh\nnpm test\n```\n\nSee [docs](https://example.com) and @ada\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n\n> quoted"
+        );
+        assert_eq!(wiki_to_markdown("Plain reply"), "Plain reply");
     }
 
     #[test]

@@ -58,10 +58,13 @@ export type JiraIssueThread = {
   headRefName: string;
 };
 
+export type JiraDeployment = "cloud" | "datacenter";
+
 export type JiraStatus = {
   connected: boolean;
   site: string;
   email: string;
+  deployment: JiraDeployment;
 };
 
 const PROJECT_IDS_KEY = "monocode.jiraHiddenProjects";
@@ -89,11 +92,13 @@ export async function saveJiraConfig(config: {
   site: string;
   email: string;
   token: string;
+  deployment?: JiraDeployment;
 }): Promise<JiraStatus> {
   const status = await invoke<JiraStatus>("jira_set_config", {
     site: config.site.trim(),
     email: config.email.trim(),
     token: config.token.trim(),
+    deployment: config.deployment ?? "cloud",
   });
   clearJiraCache();
   return status;
@@ -104,6 +109,7 @@ export async function disconnectJira(): Promise<JiraStatus> {
     site: "",
     email: "",
     token: "",
+    deployment: "cloud",
   });
   clearJiraCache();
   return status;

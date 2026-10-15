@@ -21,13 +21,19 @@ beforeEach(() => {
   vi.mocked(invoke).mockReset();
   vi.mocked(invoke).mockImplementation(async (command, args) => {
     if (command === "jira_status")
-      return { connected: false, site: "", email: "" };
+      return { connected: false, site: "", email: "", deployment: "cloud" };
     if (command === "jira_set_config") {
-      const config = args as { site: string; email: string; token: string };
+      const config = args as {
+        site: string;
+        email: string;
+        token: string;
+        deployment?: string;
+      };
       return {
         connected: Boolean(config.token),
         site: config.site,
         email: config.email,
+        deployment: config.deployment ?? "cloud",
       };
     }
     if (command === "jira_list_projects")
@@ -74,6 +80,7 @@ it("connects Jira, synchronizes project filters, and disconnects", async () => {
     site: "acme.atlassian.net",
     email: "ada@example.com",
     token: "secret",
+    deployment: "cloud",
   });
   expect(container.textContent).toContain("ada@example.com");
   const email = container.querySelector<HTMLButtonElement>(
@@ -100,10 +107,33 @@ it("connects Jira, synchronizes project filters, and disconnects", async () => {
     site: "",
     email: "",
     token: "",
+    deployment: "cloud",
   });
   expect(
     container.querySelector<HTMLInputElement>('input[type="password"]')!.value,
   ).toBe("");
+});
+
+it("connects Jira Data Center with a personal access token", async () => {
+  await act(async () => root.render(createElement(JiraSettings)));
+  const datacenter = [...container.querySelectorAll("button")].find(
+    (button) => button.textContent === "Jira Data Center",
+  )!;
+  await act(async () => datacenter.click());
+  expect(
+    container.querySelector('input[aria-label="Atlassian email"]'),
+  ).toBeNull();
+  await input("Jira URL", "https://jira.example.com/jira/browse/ENG-1");
+  await input("Personal access token", "pat");
+  await submit();
+  expect(invoke).toHaveBeenCalledWith("jira_set_config", {
+    site: "https://jira.example.com/jira/browse/ENG-1",
+    email: "",
+    token: "pat",
+    deployment: "datacenter",
+  });
+  expect(container.textContent).toContain("Jira Data Center");
+  expect(container.querySelector("form")).toBeNull();
 });
 
 it("shows authentication errors without claiming a successful connection", async () => {

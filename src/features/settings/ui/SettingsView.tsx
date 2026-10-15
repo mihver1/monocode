@@ -1264,7 +1264,7 @@ function InboxPage({
             Jira
           </span>
         }
-        description="Jira Cloud issues from the projects you pick."
+        description="Jira Cloud or Data Center issues from the projects you pick."
       >
         <JiraSettings />
       </Group>

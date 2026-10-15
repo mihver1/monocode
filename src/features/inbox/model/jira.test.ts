@@ -169,6 +169,7 @@ describe("Jira inbox", () => {
       site: "",
       email: "",
       token: "",
+      deployment: "cloud",
     });
     expect(peekJiraIssueDetails(issue.identifier)).toBeNull();
     await jiraIssueDetails(issue.identifier);
@@ -181,6 +182,19 @@ describe("Jira inbox", () => {
       site: "acme",
       email: "ada@example.com",
       token: "token",
+      deployment: "cloud",
+    });
+    await saveJiraConfig({
+      site: " https://jira.example.com/jira ",
+      email: "",
+      token: " pat ",
+      deployment: "datacenter",
+    });
+    expect(invoke).toHaveBeenCalledWith("jira_set_config", {
+      site: "https://jira.example.com/jira",
+      email: "",
+      token: "pat",
+      deployment: "datacenter",
     });
     expect(peekJiraIssueDetails(issue.identifier)).toBeNull();
   });
