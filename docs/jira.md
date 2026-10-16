@@ -1,6 +1,6 @@
 # Jira inbox
 
-MonoCode reads Jira Cloud and Jira Data Center. Choose the product in
+StereoCode reads Jira Cloud and Jira Data Center. Choose the product in
 **Settings → Inbox → Jira**. The connection is validated before credentials are
 saved. **Disconnect** removes the saved credentials and clears cached Jira
 content. Credentials are stored in the app's local data directory; on Unix the
@@ -22,11 +22,11 @@ Create the token from your Jira profile (**Profile → Personal Access Tokens**)
 The token is sent as a bearer token. Username and password are not used.
 
 Include a context path when Jira is not served from the host root, for example
-`https://jira.example.com/jira`. Pasting a browse URL is fine; MonoCode keeps
+`https://jira.example.com/jira`. Pasting a browse URL is fine; StereoCode keeps
 the context path and drops the page path. The site must use HTTPS.
 
 Data Center uses REST API v2. Descriptions and comments are Jira wiki markup;
-MonoCode converts them to Markdown for the inbox. Comments you post are sent as
+StereoCode converts them to Markdown for the inbox. Comments you post are sent as
 wiki text.
 
 ## Inbox

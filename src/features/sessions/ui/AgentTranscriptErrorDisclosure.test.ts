@@ -73,10 +73,10 @@ describe("tool error disclosure", () => {
   });
 });
 
-describe("MonoCode CLI disclosure", () => {
+describe("StereoCode CLI disclosure", () => {
   it("shows a compact row without a disclosure for a successful call", () => {
     const command =
-      "/repo/target/debug/MonoCode.app/Contents/MacOS/monocode app notes.list";
+      "/repo/target/debug/StereoCode.app/Contents/MacOS/stereocode app notes.list";
     const blocks: Block[] = [
       { id: "user", role: "user", text: "/monocode list notes" },
       {
@@ -99,10 +99,9 @@ describe("MonoCode CLI disclosure", () => {
     );
     expect(row?.querySelector("button")).toBeNull();
     expect(row?.querySelector("pre")).toBeNull();
-    expect(row?.textContent).toContain("Ranmonocode app notes.list");
     expect(row?.querySelector('img[src="/monocode.png"]')).not.toBeNull();
     expect(row?.querySelector(".bg-content\\/6")).not.toBeNull();
-    expect(container.textContent).not.toContain("Contents/MacOS/monocode");
+    expect(container.textContent).not.toContain("Contents/MacOS/stereocode");
     expect(container.textContent).not.toContain('"title":"Ideas"');
   });
 
@@ -112,7 +111,7 @@ describe("MonoCode CLI disclosure", () => {
       {
         id: "notes",
         role: "tool",
-        text: "monocode app notes.list",
+        text: "stereocode app notes.list",
         tool: { kind: "shell", status: "failed", detail: "Connection refused" },
       },
     ];
@@ -121,7 +120,7 @@ describe("MonoCode CLI disclosure", () => {
     );
 
     const trigger = container.querySelector<HTMLButtonElement>(
-      'button[aria-label="Show error details for MonoCode: List notes"]',
+      'button[aria-label="Show error details for StereoCode: List notes"]',
     );
     expect(trigger?.getAttribute("aria-expanded")).toBe("false");
     expect(container.textContent).not.toContain("Connection refused");

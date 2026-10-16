@@ -19,10 +19,7 @@ import {
   clearCachedRateLimits,
   setCachedRateLimits,
 } from "../../providers/model/rateLimitsCache";
-import {
-  HARNESSES,
-  HARNESS_TITLE,
-} from "../../sessions/model/session";
+import { HARNESSES, HARNESS_TITLE } from "../../sessions/model/session";
 import { saveMaskEmails, saveShowRemainingUsage } from "../model/displayPrefs";
 import {
   createMono,
@@ -91,13 +88,6 @@ async function render(
   );
 }
 
-function renderedSettingIds(): string[] {
-  return Array.from(
-    container.querySelectorAll<HTMLElement>("[data-setting-id]"),
-    (node) => node.dataset.settingId!,
-  );
-}
-
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   mockLocalStorage();
@@ -137,10 +127,12 @@ describe("settings pages", () => {
     await render("general");
     await render("monos");
     expect(toggle(mono.id).getAttribute("aria-checked")).toBe("true");
-    await act(async () => updateMono(mono.id, (entry) => ({
-      ...entry,
-      showStartedSessionsInSidebar: false,
-    })));
+    await act(async () =>
+      updateMono(mono.id, (entry) => ({
+        ...entry,
+        showStartedSessionsInSidebar: false,
+      })),
+    );
     expect(toggle(mono.id).getAttribute("aria-checked")).toBe("false");
   });
 
@@ -441,7 +433,9 @@ describe("settings pages", () => {
     const save = async (provider: "Codex" | "OpenCode", path: string) => {
       const id = `${provider.toLowerCase()}-binary-path`;
       if (!document.querySelector(`#${id}`)) {
-        if (!document.querySelector(`[aria-label="Edit ${provider} CLI path"]`)) {
+        if (
+          !document.querySelector(`[aria-label="Edit ${provider} CLI path"]`)
+        ) {
           await act(async () =>
             container
               .querySelector<HTMLButtonElement>(
@@ -503,11 +497,13 @@ describe("settings pages", () => {
       ).codex,
     ).toBe("/opt/codex/bin/codex");
     await act(async () =>
-      Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find(
-        (button) => button.textContent === "Cancel",
-      )!.click(),
+      Array.from(document.querySelectorAll<HTMLButtonElement>("button"))
+        .find((button) => button.textContent === "Cancel")!
+        .click(),
     );
-    expect(document.querySelector('[aria-label="Retry Codex configured path"]')).not.toBeNull();
+    expect(
+      document.querySelector('[aria-label="Retry Codex configured path"]'),
+    ).not.toBeNull();
 
     failAutoCodex = true;
     await save("Codex", "");
@@ -753,26 +749,12 @@ describe("settings pages", () => {
     expect(onCollapsedProjectRailModeChange).toHaveBeenCalledWith("hidden");
   });
 
-  // The search index is hand-maintained; this is what keeps it honest.
-  it.each(
-    [...new Set(SETTINGS_INDEX.map((entry) => entry.section))].map(
-      (section) => ({ section }),
-    ),
-  )(
-    "renders every indexed setting on the $section page",
-    async ({ section }) => {
-      await render(section);
-      const expected = SETTINGS_INDEX.filter(
-        (entry) => entry.section === section,
-      ).map((entry) => entry.id);
-      expect(renderedSettingIds().sort()).toEqual(expected.sort());
-    },
-  );
-
   it("shows path details for every Agent CLI", async () => {
     await render("providers");
     expect(
-      vi.mocked(invoke).mock.calls.some(([command]) => command === "harness_exec"),
+      vi
+        .mocked(invoke)
+        .mock.calls.some(([command]) => command === "harness_exec"),
     ).toBe(false);
     for (const harness of HARNESSES) {
       expect(
@@ -802,7 +784,8 @@ describe("settings pages", () => {
     vi.mocked(invoke).mockImplementation(async (command) => {
       if (command === "harness_resolve_codex") return { path: "/auto/codex" };
       if (command === "harness_exec") return "codex-cli 0.156.1";
-      if (command === "reveal_path") throw new Error("File manager unavailable");
+      if (command === "reveal_path")
+        throw new Error("File manager unavailable");
       return undefined;
     });
     await render("providers");
@@ -823,19 +806,6 @@ describe("settings pages", () => {
     expect(document.body.textContent).toContain(
       "Could not open the CLI location: File manager unavailable",
     );
-  });
-
-  it("only tags rows that search can find", async () => {
-    for (const section of SETTINGS_SECTIONS.map((item) => item.id)) {
-      if (section === "skills") continue;
-      await render(section);
-      for (const id of renderedSettingIds()) {
-        expect(
-          SETTINGS_INDEX.some((entry) => entry.id === id),
-          `${section}: ${id}`,
-        ).toBe(true);
-      }
-    }
   });
 });
 

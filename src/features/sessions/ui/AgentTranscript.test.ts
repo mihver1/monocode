@@ -56,9 +56,9 @@ describe("AgentTranscript collapsed work", () => {
     expect(legacy).not.toContain("/monocode");
   });
 
-  it("shows MonoCode CLI actions instead of their long shell commands", () => {
+  it("shows StereoCode CLI actions instead of their long shell commands", () => {
     const command =
-      "/repo/target/debug/MonoCode.app/Contents/MacOS/monocode";
+      "/repo/target/debug/StereoCode.app/Contents/MacOS/stereocode";
     const markup = render(
       [
         { id: "user", role: "user", text: "/monocode list my notes" },
@@ -77,19 +77,19 @@ describe("AgentTranscript collapsed work", () => {
       ],
       true,
     );
-    expect(markup).toContain("Using MonoCode");
+    expect(markup).toContain("data-monocode-tool-call");
     expect(markup).toContain('data-monocode-tool-call="--help"');
     expect(markup).toContain('data-monocode-tool-call="notes.list"');
-    expect(markup).toContain("monocode app --help");
-    expect(markup).toContain("monocode app notes.list");
+    expect(markup).toContain("stereocode app --help");
+    expect(markup).toContain("stereocode app notes.list");
     expect(markup).toContain("Ran");
     expect(markup).toContain("Running");
-    expect(markup).not.toContain("Contents/MacOS/monocode");
-    expect(markup).not.toContain("Show error details for MonoCode");
+    expect(markup).not.toContain("Contents/MacOS/stereocode");
+    expect(markup).not.toContain("Show error details for StereoCode");
   });
 
-  it("shows the full command before approving a MonoCode CLI call", () => {
-    const command = "monocode app sessions.send --json '{\"prompt\":\"private-marker\"}'";
+  it("shows the full command before approving a StereoCode CLI call", () => {
+    const command = "stereocode app sessions.send --json '{\"prompt\":\"private-marker\"}'";
     const markup = renderToStaticMarkup(
       createElement(AgentTranscript, {
         blocks: [
@@ -117,7 +117,7 @@ describe("AgentTranscript collapsed work", () => {
           {
             id: "call",
             role: "tool",
-            text: "monocode app notes.list && echo extra",
+            text: "stereocode app notes.list && echo extra",
             tool: { kind: "shell", status: "pending" },
             approval: { requestId: 2 },
           },
@@ -131,20 +131,20 @@ describe("AgentTranscript collapsed work", () => {
     expect(compound).toContain("Allow</button>");
   });
 
-  it("keeps a failed MonoCode call compact until its error is opened", () => {
+  it("keeps a failed StereoCode call compact until its error is opened", () => {
     const markup = render([
       { id: "user", role: "user", text: "/monocode list notes" },
       {
         id: "notes",
         role: "tool",
-        text: "monocode app notes.list",
+        text: "stereocode app notes.list",
         tool: { kind: "shell", status: "failed", detail: "Connection refused" },
       },
     ]);
     expect(markup).toContain('data-monocode-tool-call="notes.list"');
     expect(markup).toContain("Ran");
-    expect(markup).toContain("monocode app notes.list");
-    expect(markup).toContain("Show error details for MonoCode: List notes");
+    expect(markup).toContain("stereocode app notes.list");
+    expect(markup).toContain("Show error details for StereoCode: List notes");
     expect(markup).not.toContain("Connection refused");
   });
 
@@ -985,7 +985,7 @@ describe("worker assignment prompts", () => {
             id: "u1",
             role: "user",
             internal: true,
-            text: "Review the current branch against main.\n\n<monocode_assignment>\nYou are a worker managed by a MonoCode lead. Your assigned write scope is: src/App.tsx.\n</monocode_assignment>",
+            text: "Review the current branch against main.\n\n<monocode_assignment>\nYou are a worker managed by a StereoCode lead. Your assigned write scope is: src/App.tsx.\n</monocode_assignment>",
           },
           { id: "a1", role: "assistant", text: "Looking now" },
         ],
@@ -994,6 +994,6 @@ describe("worker assignment prompts", () => {
     expect(markup).toContain("Review the current branch against main.");
     expect(markup).toContain("Looking now");
     expect(markup).not.toContain("monocode_assignment");
-    expect(markup).not.toContain("You are a worker managed by a MonoCode lead");
+    expect(markup).not.toContain("You are a worker managed by a StereoCode lead");
   });
 });

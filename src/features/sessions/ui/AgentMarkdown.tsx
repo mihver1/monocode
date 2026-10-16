@@ -155,7 +155,7 @@ function fileLinkMenuItems(
     {
       kind: "item",
       id: "open-monocode",
-      label: "Open in MonoCode",
+      label: "Open in StereoCode",
       disabled: !canOpenInMonoCode,
     },
     { kind: "item", id: "open-default", label: "Open in Default App" },

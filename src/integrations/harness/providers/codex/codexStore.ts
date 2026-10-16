@@ -116,7 +116,7 @@ async function prepare(
       "codex",
     );
     await request("initialize", {
-      clientInfo: { name: "monocode", title: "MonoCode", version: "0.1.0" },
+      clientInfo: { name: "monocode", title: "StereoCode", version: "0.1.0" },
       capabilities: { experimentalApi: true },
     });
     await rpc.notify("initialized", undefined);

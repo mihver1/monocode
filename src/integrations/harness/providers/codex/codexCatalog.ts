@@ -85,7 +85,7 @@ export async function discoverCodexModels(
           {
             clientInfo: {
               name: "monocode",
-              title: "MonoCode",
+              title: "StereoCode",
               version: "0.1.0",
             },
             capabilities: { experimentalApi: true },

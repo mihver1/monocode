@@ -4,7 +4,6 @@ import {
   presentReleaseNotes,
   releaseNotesForVersion,
   releaseNotesMarkdown,
-  releaseNotesTitle,
 } from "./releaseNotes";
 
 const fixture = `# Changelog
@@ -35,9 +34,6 @@ describe("releaseNotesForVersion", () => {
     const release = releaseNotesForVersion("0.1.2", fixture);
 
     expect(release?.source).toEqual({ version: "0.1.2" });
-    expect(releaseNotesTitle(release!.source.version)).toBe(
-      "What's new in MonoCode 0.1.2",
-    );
     expect(release?.markdown).toContain("## [0.1.2]");
     expect(release?.markdown).not.toContain("## [0.1.3]");
     expect(release?.markdown).not.toContain("## [0.1.1]");

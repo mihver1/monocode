@@ -4,6 +4,7 @@ mod account_identity;
 mod artifacts;
 mod automations;
 mod azure_devops;
+mod browser;
 mod chat_background;
 mod checkpoint;
 mod codex_mono_store;
@@ -268,6 +269,7 @@ pub fn run() {
             artifacts::serve_html(ctx.app_handle(), &request)
         })
         .manage(harness::HarnessHost::new())
+        .manage(browser::BrowserHost::default())
         .manage(pty::PtyHost::new())
         .manage(remote::RemoteConnections::default())
         .manage(window_transfer::WindowTransferState::new())
@@ -302,6 +304,11 @@ pub fn run() {
             menu::dispatch(app, event.id().as_ref());
         })
         .invoke_handler(tauri::generate_handler![
+            browser::browser_status,
+            browser::browser_launch,
+            browser::browser_shutdown,
+            browser::browser_import,
+            browser::browser_select,
             remote::remote_machines,
             remote::remote_connect,
             remote::remote_disconnect,
@@ -626,7 +633,7 @@ pub fn run() {
             project_logo::forget_logo_file,
         ])
         .build(context)
-        .expect("error while building MonoCode");
+        .expect("error while building StereoCode");
 
     app.run(|handle, event| match event {
         #[cfg(target_os = "macos")]
@@ -680,6 +687,7 @@ pub fn run() {
             window::request_quit(handle);
         }
         tauri::RunEvent::Exit => {
+            browser::shutdown(handle);
             handle.state::<remote::RemoteConnections>().shutdown();
             reap_harness_children(handle);
         }

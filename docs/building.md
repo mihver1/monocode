@@ -1,6 +1,6 @@
 # Build from source
 
-MonoCode supports macOS, Linux, and Windows. You need Node.js 20+ and a current stable Rust toolchain. Install and sign in to at least one agent CLI using [provider setup](providers.md).
+StereoCode supports macOS, Linux, and Windows. You need Node.js 20+ and a current stable Rust toolchain. Install and sign in to at least one agent CLI using [provider setup](providers.md).
 
 ## Platform prerequisites
 
@@ -16,6 +16,8 @@ From the repository root:
 npm install
 npm run tauri dev
 ```
+
+The application name is **StereoCode**, its bundle identifier is **`tech.privcloud.stereo`**, and the desktop executable is **`stereocode`**. macOS bundles are named `StereoCode.app`, including the development wrapper. The new bundle identifier uses a separate OS application-data namespace and permissions; existing MonoCode data is not automatically migrated. Internal storage keys, wire protocols, and remote-host service identifiers retain their existing technical names.
 
 ## Ubuntu / Debian packages
 
@@ -44,7 +46,7 @@ On EL 10, the setup helper enables EPEL 10 and CRB automatically, since the deve
 The build emits a `.rpm` under `target/release/bundle/rpm/`, installable with:
 
 ```bash
-sudo dnf install ./target/release/bundle/rpm/MonoCode-*.rpm
+sudo dnf install ./target/release/bundle/rpm/StereoCode-*.rpm
 ```
 
 EL 9 and older are unsupported (`webkit2gtk4.1-devel` only exists in EPEL 10). The published release `.rpm` is built on Enterprise Linux 10 so it loads on Fedora and EL 10. See [Linux installation](install.md#fedora--enterprise-linux-packages) for release package installation and runtime repository setup.

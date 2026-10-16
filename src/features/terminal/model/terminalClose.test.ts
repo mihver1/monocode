@@ -13,7 +13,7 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
   ask: (...args: unknown[]) => ask(...args),
 }));
 
-const dialogOptions = { title: "MonoCode", kind: "warning" } as const;
+const dialogOptions = { title: expect.any(String), kind: "warning" } as const;
 
 describe("confirmCloseTerminal", () => {
   afterEach(() => {

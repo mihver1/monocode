@@ -49,9 +49,9 @@ def main():
                 raise RuntimeError(daemon.stderr.read().decode())
             # Exercise the actual desktop executable's non-GUI askpass mode.
             # Only trust the fingerprint of the disposable key created above.
-            desktop = ROOT / "target/debug/monocode"
+            desktop = ROOT / "target/debug/stereocode"
             if not desktop.is_file():
-                raise RuntimeError("Run cargo build --bin monocode first")
+                raise RuntimeError("Run cargo build --bin stereocode first")
             fingerprint = subprocess.check_output(["ssh-keygen", "-lf", str(folder / "host.pub")], text=True).split()[1]
             with socket.socket() as prompts:
                 prompts.bind(("127.0.0.1", 0))

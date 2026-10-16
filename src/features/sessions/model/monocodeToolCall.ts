@@ -24,6 +24,17 @@ const ACTION_LABELS: Record<string, string> = {
   "artifacts.list": "List artifacts",
   "artifacts.read": "Read an artifact",
   "artifacts.write": "Write an artifact",
+  "browser.status": "Check browser",
+  "browser.open": "Open browser tab",
+  "browser.tabs": "List browser tabs",
+  "browser.navigate": "Navigate browser",
+  "browser.snapshot": "Inspect page",
+  "browser.click": "Click page element",
+  "browser.fill": "Fill page field",
+  "browser.press": "Press browser key",
+  "browser.evaluate": "Evaluate page script",
+  "browser.screenshot": "Take browser screenshot",
+  "browser.close": "Close browser tab",
 };
 
 /** Conservatively parse one shell invocation; compound commands use the shell row. */
@@ -95,7 +106,7 @@ export function monoCodeToolCall(block: Block): MonoCodeToolCall | undefined {
   const command = candidate?.trim().replace(/^Run(?:ning)?\s+command:\s*/i, "");
   if (!command) return undefined;
   const words = shellWords(command);
-  if (!words || !/(?:^|[/\\])monocode(?:\.exe)?$/i.test(words[0] ?? ""))
+  if (!words || !/(?:^|[/\\])stereocode(?:\.exe)?$/i.test(words[0] ?? ""))
     return undefined;
   if (words[1] !== "app") return undefined;
   const action = words[2] ?? "--help";
@@ -130,5 +141,5 @@ export function monoCodeWorkSummary(
   if (calls.length === 0 || calls.some((block) => !monoCodeToolCall(block))) {
     return undefined;
   }
-  return live ? "Using MonoCode" : "Used MonoCode";
+  return live ? "Using StereoCode" : "Used StereoCode";
 }

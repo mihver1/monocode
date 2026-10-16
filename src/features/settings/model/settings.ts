@@ -24,6 +24,7 @@ export type SettingsSectionId =
   | "keybindings"
   | "chat"
   | "providers"
+  | "browser"
   | "mcp"
   | "skills"
   | "monos"
@@ -55,7 +56,7 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
     group: "app",
     label: "General",
     description:
-      "How MonoCode reaches you, and the panels it shows.",
+      "How StereoCode reaches you, and the panels it shows.",
     keywords: "sounds notifications notes rail",
   },
   {
@@ -96,9 +97,18 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
     group: "agents",
     label: "Providers",
     description:
-      "Provider accounts, agent CLIs MonoCode can drive, and the model new sessions start with.",
+      "Provider accounts, agent CLIs StereoCode can drive, and the model new sessions start with.",
     keywords:
       "account sign in login model harness claude codex gemini cli default hooks",
+  },
+  {
+    id: "browser",
+    group: "agents",
+    label: "Browser",
+    description:
+      "A visible browser for /operator agents, with persistent isolated profiles and sign-ins.",
+    keywords:
+      "chromium chrome edge brave localhost automation browser cli cookies login import profile",
   },
   {
     id: "mcp",
@@ -173,6 +183,26 @@ export type SettingsEntry = {
 };
 
 export const SETTINGS_INDEX: SettingsEntry[] = [
+  {
+    id: "browser-session",
+    section: "browser",
+    label: "Launch or stop browser",
+    keywords:
+      "headed window manual sign in operator localhost screenshot navigate automation",
+  },
+  {
+    id: "browser-profile",
+    section: "browser",
+    label: "Selected isolated browser profile",
+    keywords:
+      "persistent cookies login sessions select chrome chromium edge brave",
+  },
+  {
+    id: "browser-import",
+    section: "browser",
+    label: "Import browser profile",
+    keywords: "copy credentials cookies login source encrypted passkeys",
+  },
   {
     id: "remote-machines",
     section: "connections",

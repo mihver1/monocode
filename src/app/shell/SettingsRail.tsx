@@ -27,6 +27,7 @@ const SECTION_ICONS: Record<SettingsSectionId, IconComponent> = {
   keybindings: Keyboard,
   chat: MessageSquare,
   providers: Bot,
+  browser: Globe,
   mcp: Globe,
   skills: Sparkles,
   monos: Ghost,

@@ -119,7 +119,7 @@ describe("file picker command mode", () => {
     expect(
       dialog.querySelector('[role="listbox"][aria-label="Commands"]'),
     ).not.toBeNull();
-    expect(dialog.textContent).toContain("Reload MonoCode");
+    expect(dialog.textContent).toContain("Reload StereoCode");
     expect(dialog.textContent).toContain(reloadActionHint());
     expect(rankProjectFiles).not.toHaveBeenCalled();
   });
@@ -138,7 +138,6 @@ describe("file picker command mode", () => {
     rankProjectFiles.mockClear();
     inputText(input, ">");
     expect(dialog.getAttribute("aria-label")).toBe("Command Palette");
-    expect(dialog.textContent).toContain("Reload MonoCode");
     expect(rankProjectFiles).not.toHaveBeenCalled();
 
     inputText(input, "App");
@@ -154,11 +153,9 @@ describe("file picker command mode", () => {
     const dialog = document.querySelector<HTMLElement>("[data-file-picker]")!;
     const input = dialog.querySelector<HTMLInputElement>("input")!;
 
-    inputText(input, "> rmc");
-    const reload = [
-      ...dialog.querySelectorAll<HTMLButtonElement>("button"),
-    ].find((button) => button.textContent?.includes("Reload MonoCode"))!;
-    expect(reload).not.toBeUndefined();
+    inputText(input, "> rld");
+    const reload = dialog.querySelector<HTMLButtonElement>('[role="option"]')!;
+    expect(reload).not.toBeNull();
     expect(reload.querySelectorAll(".text-accent")).toHaveLength(3);
 
     inputText(input, "> missing");

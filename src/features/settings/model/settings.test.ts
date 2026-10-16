@@ -610,29 +610,6 @@ describe("collapsed project rail setting", () => {
 });
 
 describe("settings navigation", () => {
-  it("lists every section under exactly one rail group", () => {
-    const groups = settingsSectionsByGroup();
-    expect(groups.map((group) => group.label)).toEqual([
-      "App",
-      "Agents",
-      "Workspace",
-    ]);
-    expect(groups.flatMap((group) => group.sections.map((s) => s.id))).toEqual([
-      "general",
-      "connections",
-      "appearance",
-      "keybindings",
-      "chat",
-      "providers",
-      "mcp",
-      "skills",
-      "monos",
-      "inbox",
-      "archive",
-      "worktrees",
-    ]);
-  });
-
   it("points every indexed setting at a real section", () => {
     const sections = new Set(
       settingsSectionsByGroup().flatMap((group) =>

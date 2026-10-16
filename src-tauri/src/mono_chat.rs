@@ -279,10 +279,12 @@ fn menu(
         .build(app)?;
     let mut builder = MenuBuilder::new(app).item(&header).separator();
     if monos.is_empty() {
-        let empty =
-            MenuItemBuilder::with_id("mono-chat-empty", "Create a Mono in MonoCode to chat here")
-                .enabled(false)
-                .build(app)?;
+        let empty = MenuItemBuilder::with_id(
+            "mono-chat-empty",
+            "Create a Mono in StereoCode to chat here",
+        )
+        .enabled(false)
+        .build(app)?;
         builder = builder.item(&empty);
     } else {
         for mono in monos {
@@ -290,7 +292,7 @@ fn menu(
             if let Some(icon) = menu_bar::icon_for(&mono.id, mascots) {
                 item = item.icon(icon);
             } else {
-                eprintln!("monocode: missing menu portrait for Mono {}", mono.id);
+                eprintln!("StereoCode: missing menu portrait for Mono {}", mono.id);
             }
             let item = item.build(app)?;
             builder = builder.item(&item);
@@ -477,7 +479,7 @@ pub fn open(app: &AppHandle, mono_id: String) -> Result<(), String> {
     let handle = app.clone();
     app.run_on_main_thread(move || {
         if let Err(error) = select(&handle, &mono_id) {
-            eprintln!("monocode: open floating Mono: {error}");
+            eprintln!("StereoCode: open floating Mono: {error}");
             handle
                 .state::<MonoChatState>()
                 .0
@@ -568,7 +570,7 @@ pub fn mono_chat_switch(
             None => select(&handle, &to),
         };
         if let Err(error) = result {
-            eprintln!("monocode: switch floating Mono: {error}");
+            eprintln!("StereoCode: switch floating Mono: {error}");
             handle
                 .state::<MonoChatState>()
                 .0
@@ -702,7 +704,7 @@ pub async fn mono_chat_ready(app: AppHandle, window: WebviewWindow) -> Result<()
                 .ready
                 .insert(window.label().to_owned());
         } else if let Err(error) = &result {
-            eprintln!("monocode: {error}");
+            eprintln!("StereoCode: {error}");
         }
         let _ = tx.try_send(result);
     })

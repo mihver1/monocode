@@ -777,12 +777,12 @@ function TitleBarComponent({
       : "";
     const project = cwd ? basename(cwd) : "";
     if (activeName && project && activeName !== project) {
-      return `${activeName} — ${project} — MonoCode`;
+      return `${activeName} — ${project} — StereoCode`;
     }
     if (project) {
-      return `${project} — MonoCode`;
+      return `${project} — StereoCode`;
     }
-    return "MonoCode";
+    return "StereoCode";
   }, [activeTab, cwd]);
 
   useEffect(() => {

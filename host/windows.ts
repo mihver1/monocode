@@ -104,13 +104,13 @@ if ($null -eq $task) {
   $principal = New-ScheduledTaskPrincipal -UserId $sid -LogonType Interactive -RunLevel Limited
   $trigger = New-ScheduledTaskTrigger -AtLogOn -User $sid
   $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1)
-  Register-ScheduledTask -TaskName $name -Action $action -Principal $principal -Trigger $trigger -Settings $settings -Description 'MonoCode remote agent host for this user' | Out-Null
+  Register-ScheduledTask -TaskName $name -Action $action -Principal $principal -Trigger $trigger -Settings $settings -Description 'StereoCode remote agent host for this user' | Out-Null
 } else {
   $taskSid = [string] $task.Principal.UserId
   if ($taskSid -notmatch '^S-1-') {
     $taskSid = ([Security.Principal.NTAccount]::new($taskSid)).Translate([Security.Principal.SecurityIdentifier]).Value
   }
-  if ($taskSid -ne $sid) { throw 'The existing MonoCode task belongs to a different user.' }
+  if ($taskSid -ne $sid) { throw 'The existing host task belongs to a different user.' }
 }
 Start-ScheduledTask -TaskName $name
 `;

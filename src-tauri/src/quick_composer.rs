@@ -514,7 +514,7 @@ fn reveal(app: &AppHandle, toggle: bool) {
         }
         match build(&handle) {
             Ok(panel) => show(&handle, &panel),
-            Err(err) => eprintln!("monocode: quick composer: {err}"),
+            Err(err) => eprintln!("StereoCode: quick composer: {err}"),
         }
     });
 }
@@ -525,7 +525,7 @@ fn build(app: &AppHandle) -> tauri::Result<WebviewWindow> {
         QUICK_COMPOSER_LABEL,
         WebviewUrl::App("quick-composer.html".into()),
     )
-    .title("MonoCode")
+    .title("StereoCode")
     .inner_size(WIDTH, INITIAL_HEIGHT)
     .resizable(false)
     .maximizable(false)
@@ -564,7 +564,7 @@ fn show(app: &AppHandle, panel: &WebviewWindow) {
     let _ = panel.emit(SHOWN, ());
     if let Err(err) = git_popup::prepare(app, panel) {
         // Opening the picker retries; a failed preload must not block drafting.
-        eprintln!("monocode: prepare git picker: {err}");
+        eprintln!("StereoCode: prepare git picker: {err}");
     }
 }
 
@@ -653,7 +653,7 @@ pub(crate) fn make_panel(window: &WebviewWindow) {
     // size is undefined behavior (and objc2 panics on it), so fall back to an
     // ordinary window if a Tao update ever changes its layout.
     if panel_class.instance_size() != ns_window.class().instance_size() {
-        eprintln!("monocode: quick composer: panel class does not match Tao's window size");
+        eprintln!("StereoCode: quick composer: panel class does not match Tao's window size");
         return;
     }
     unsafe {

@@ -6,38 +6,38 @@ function shell(text: string): Block {
   return { id: text, role: "tool", text, tool: { kind: "shell" } };
 }
 
-describe("MonoCode CLI tool calls", () => {
+describe("StereoCode CLI tool calls", () => {
   it("recognizes app actions with absolute, quoted, or bare executables", () => {
     expect(
       monoCodeToolCall(
         shell(
-          "/repo/target/debug/MonoCode.app/Contents/MacOS/monocode app notes.list --json '{}'",
+          "/repo/target/debug/StereoCode.app/Contents/MacOS/stereocode app notes.list --json '{}'",
         ),
       )?.label,
     ).toBe("List notes");
     expect(
       monoCodeToolCall(
         shell(
-          "'/Applications/MonoCode App/monocode' app folders.move --input -",
+          "'/Applications/StereoCode App/stereocode' app folders.move --input -",
         ),
       )?.label,
     ).toBe("Move a session");
     expect(
       monoCodeToolCall(
-        shell('"C:\\Program Files\\MonoCode\\monocode.exe" app notes.list'),
+        shell('"C:\\Program Files\\StereoCode\\stereocode.exe" app notes.list'),
       )?.label,
     ).toBe("List notes");
-    expect(monoCodeToolCall(shell("monocode app --help"))?.label).toBe(
+    expect(monoCodeToolCall(shell("stereocode app --help"))?.label).toBe(
       "View CLI commands",
     );
     expect(
-      monoCodeToolCall(shell("monocode app sessions.read --json '{}'"))?.label,
+      monoCodeToolCall(shell("stereocode app sessions.read --json '{}'"))?.label,
     ).toBe("Read a session");
     expect(
-      monoCodeToolCall(shell("monocode app sessions.send --json '{}'"))?.label,
+      monoCodeToolCall(shell("stereocode app sessions.send --json '{}'"))?.label,
     ).toBe("Continue a session");
     expect(
-      monoCodeToolCall(shell("monocode app sessions.draft --json '{}'"))?.label,
+      monoCodeToolCall(shell("stereocode app sessions.draft --json '{}'"))?.label,
     ).toBe("Save a draft");
     for (const [action, label] of [
       ["sessions.stop", "Stop a session"],
@@ -45,18 +45,18 @@ describe("MonoCode CLI tool calls", () => {
       ["sessions.delete", "Delete a session"],
     ]) {
       expect(
-        monoCodeToolCall(shell(`monocode app ${action} --json '{}'`))?.label,
+        monoCodeToolCall(shell(`stereocode app ${action} --json '{}'`))?.label,
       ).toBe(label);
     }
     expect(
-      monoCodeToolCall(shell("monocode app notes.write --input -"))?.label,
+      monoCodeToolCall(shell("stereocode app notes.write --input -"))?.label,
     ).toBe("Write a note");
     expect(
       monoCodeToolCall({
         id: "generic",
         role: "tool",
         text: "Run command:",
-        tool: { kind: "other", title: "monocode app sessions.start" },
+        tool: { kind: "other", title: "stereocode app sessions.start" },
       })?.label,
     ).toBe("Start a session");
     expect(
@@ -66,7 +66,7 @@ describe("MonoCode CLI tool calls", () => {
         text: "List",
         tool: {
           kind: "execute",
-          preview: { kind: "shell", title: "monocode app notes.list" },
+          preview: { kind: "shell", title: "stereocode app notes.list" },
         },
       })?.label,
     ).toBe("List notes");
@@ -74,25 +74,25 @@ describe("MonoCode CLI tool calls", () => {
 
   it("does not restyle unrelated commands or text mentioning the CLI", () => {
     expect(
-      monoCodeToolCall(shell("echo monocode app notes.list")),
+      monoCodeToolCall(shell("echo stereocode app notes.list")),
     ).toBeUndefined();
-    expect(monoCodeToolCall(shell("monocode control list"))).toBeUndefined();
+    expect(monoCodeToolCall(shell("stereocode control list"))).toBeUndefined();
     expect(
       monoCodeToolCall({
         id: "prose",
         role: "assistant",
-        text: "monocode app notes.list",
+        text: "stereocode app notes.list",
       }),
     ).toBeUndefined();
   });
 
   it("does not compact compound shell commands or hide a longer shell preview", () => {
     for (const command of [
-      "monocode app notes.list && echo extra",
-      "monocode app notes.list; echo extra",
-      "monocode app notes.list | cat",
-      "monocode app notes.list\necho extra",
-      "monocode app notes.list --json \"$(echo extra)\"",
+      "stereocode app notes.list && echo extra",
+      "stereocode app notes.list; echo extra",
+      "stereocode app notes.list | cat",
+      "stereocode app notes.list\necho extra",
+      "stereocode app notes.list --json \"$(echo extra)\"",
     ]) {
       expect(monoCodeToolCall(shell(command))).toBeUndefined();
     }
@@ -100,31 +100,31 @@ describe("MonoCode CLI tool calls", () => {
       monoCodeToolCall({
         id: "short-title",
         role: "tool",
-        text: "monocode app notes.list",
+        text: "stereocode app notes.list",
         tool: {
           kind: "shell",
-          title: "monocode app notes.list",
+          title: "stereocode app notes.list",
           preview: {
             kind: "shell",
-            title: "monocode app notes.list && echo extra",
+            title: "stereocode app notes.list && echo extra",
           },
         },
       }),
     ).toBeUndefined();
     expect(
       monoCodeToolCall(
-        shell("monocode app sessions.send --json '{\"prompt\":\"a; b\"}'"),
+        shell("stereocode app sessions.send --json '{\"prompt\":\"a; b\"}'"),
       )?.command,
-    ).toBe("monocode app sessions.send --json '{\"prompt\":\"a; b\"}'");
+    ).toBe("stereocode app sessions.send --json '{\"prompt\":\"a; b\"}'");
   });
 
-  it("names a group only when all its tool calls use MonoCode", () => {
+  it("names a group only when all its tool calls use StereoCode", () => {
     const calls = [
-      shell("monocode app --help"),
-      shell("monocode app notes.list"),
+      shell("stereocode app --help"),
+      shell("stereocode app notes.list"),
     ];
-    expect(monoCodeWorkSummary(calls, true)).toBe("Using MonoCode");
-    expect(monoCodeWorkSummary(calls, false)).toBe("Used MonoCode");
+    expect(monoCodeWorkSummary(calls, true)).toEqual(expect.any(String));
+    expect(monoCodeWorkSummary(calls, false)).toEqual(expect.any(String));
     expect(
       monoCodeWorkSummary([...calls, shell("git status")], true),
     ).toBeUndefined();

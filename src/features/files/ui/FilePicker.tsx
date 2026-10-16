@@ -38,7 +38,7 @@ export function reloadActionHint(mod = MOD, shift = SHIFT) {
 }
 
 const ACTIONS: Action[] = [
-  { id: "reload", label: "Reload MonoCode", hint: reloadActionHint() },
+  { id: "reload", label: "Reload StereoCode", hint: reloadActionHint() },
 ];
 
 type Props = {

@@ -49,7 +49,7 @@ describe("historyWithLiveSessions", () => {
     status: "active",
     allowedHarnesses: ["codex"],
     maxWorkers: 2,
-    cli: "monocode",
+    cli: "stereocode",
     continuations: 0,
     requests: {},
     tasks: ["worker-a", "worker-b"].map((id) => ({
