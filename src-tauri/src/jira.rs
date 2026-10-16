@@ -198,15 +198,7 @@ pub async fn jira_set_config(
 pub async fn jira_list_projects(app: AppHandle) -> Result<Vec<JiraProject>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let config = require_config(&app)?;
-        fetch_jira_projects(|start| {
-            jira_get(
-                &config,
-                &format!(
-                    "{}/project/search?maxResults=100&orderBy=name&startAt={start}",
-                    config.deployment.api_base()
-                ),
-            )
-        })
+        list_jira_projects_for(&config)
     })
     .await
     .map_err(|error| error.to_string())?
@@ -472,22 +464,53 @@ fn jira_error_message(body: &str) -> Option<String> {
         .filter(|message| !message.is_empty())
 }
 
+/// Paginated `/project/search`, then the older `/project` array when search is
+/// missing. A failed search must not be treated as an empty allowlist.
+fn list_jira_projects_for(config: &JiraConfig) -> Result<Vec<JiraProject>, String> {
+    let searched = fetch_jira_projects(|start| {
+        jira_get(
+            config,
+            &format!(
+                "{}/project/search?maxResults=100&orderBy=name&startAt={start}",
+                config.deployment.api_base()
+            ),
+        )
+    });
+    if let Ok(projects) = searched {
+        return Ok(projects);
+    }
+    let data = jira_get(config, &format!("{}/project", config.deployment.api_base()))?;
+    parse_jira_project_list(&data)
+}
+
 fn parse_jira_projects(data: &Value) -> Result<Vec<JiraProject>, String> {
     let values = data
         .get("values")
         .and_then(Value::as_array)
         .ok_or_else(|| "Jira did not return projects".to_string())?;
-    Ok(values
+    Ok(parse_jira_project_values(values))
+}
+
+fn parse_jira_project_list(data: &Value) -> Result<Vec<JiraProject>, String> {
+    let values = data
+        .as_array()
+        .or_else(|| data.get("values").and_then(Value::as_array))
+        .ok_or_else(|| "Jira did not return projects".to_string())?;
+    Ok(parse_jira_project_values(values))
+}
+
+fn parse_jira_project_values(values: &[Value]) -> Vec<JiraProject> {
+    values
         .iter()
         .filter_map(|value| {
-            let id = string_field(value, "id").filter(|id| !id.is_empty())?;
+            let id = string_or_number_field(value, "id")?;
             let key = string_field(value, "key").unwrap_or_default();
             let name = string_field(value, "name")
                 .filter(|name| !name.is_empty())
                 .unwrap_or_else(|| key.clone());
             Some(JiraProject { id, key, name })
         })
-        .collect())
+        .collect()
 }
 
 // Follow every page: a partial project list would silently exclude visible
@@ -731,6 +754,21 @@ fn string_field(value: &Value, key: &str) -> Option<String> {
         .get(key)
         .and_then(Value::as_str)
         .map(|text| text.trim().to_string())
+}
+
+fn string_or_number_field(value: &Value, key: &str) -> Option<String> {
+    match value.get(key)? {
+        Value::String(text) => {
+            let text = text.trim();
+            if text.is_empty() {
+                None
+            } else {
+                Some(text.to_string())
+            }
+        }
+        Value::Number(number) => Some(number.to_string()),
+        _ => None,
+    }
 }
 
 // ---- Atlassian Document Format ----
@@ -1771,6 +1809,17 @@ mod tests {
             issue_jql(false, "all", &[]),
             "updated >= -365d ORDER BY updated DESC"
         );
+    }
+
+    #[test]
+    fn parses_a_legacy_project_array_and_numeric_ids() {
+        let projects = parse_jira_project_list(&json!([
+            { "id": 10000, "key": "ENG", "name": "Engineering" },
+            { "id": "10001", "key": "OPS", "name": "" }
+        ]))
+        .unwrap();
+        assert_eq!(projects[0].id, "10000");
+        assert_eq!(projects[1].name, "OPS");
     }
 
     #[test]

@@ -5,7 +5,6 @@ import {
   type ExplorerMenuItem,
 } from "../../features/files/ui/ExplorerMenu";
 import { ALT, MOD, SHIFT } from "../../platform/tauri/platform";
-import { runUpdateFlow } from "../model/updater";
 import {
   keybindingShortcutLabel,
   loadAutosave,
@@ -194,9 +193,6 @@ export function MenuBar({
         case "toggle_diff":
           onShowSourceControl?.();
           break;
-        case "check_for_updates":
-          void runUpdateFlow(true);
-          break;
         case "zoom_in":
           onZoomIn?.();
           break;
@@ -304,12 +300,6 @@ export function MenuBar({
             id: "close_all_tabs",
             label: "Close All Tabs",
             shortcut: shortcut("Tab: Close All", `${MOD}${SHIFT}W`),
-          },
-          { kind: "sep" },
-          {
-            kind: "item",
-            id: "check_for_updates",
-            label: "Check for Updates…",
           },
         ];
       case "view":

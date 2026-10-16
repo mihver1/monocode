@@ -95,10 +95,12 @@ it("connects Jira, synchronizes project filters, and disconnects", async () => {
   const project = container.querySelector<HTMLInputElement>(
     'input[type="checkbox"]',
   )!;
-  expect(project.checked).toBe(true);
-  await act(async () => project.click());
-  expect(loadHiddenJiraProjectIds()).toEqual(["10000"]);
   expect(project.checked).toBe(false);
+  expect(loadHiddenJiraProjectIds()).toEqual(["10000"]);
+  expect(container.textContent).toContain("0 of 1 selected");
+  await act(async () => project.click());
+  expect(loadHiddenJiraProjectIds()).toEqual([]);
+  expect(project.checked).toBe(true);
   const disconnect = [...container.querySelectorAll("button")].find(
     (button) => button.textContent === "Disconnect",
   )!;

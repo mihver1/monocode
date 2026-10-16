@@ -3,7 +3,6 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { ConnectionsSettings } from "../../connections/ui/ConnectionsSettings";
 import { ask } from "@tauri-apps/plugin-dialog";
 import {
-  ArrowDownCircle,
   Check,
   ChevronDown,
   ExternalLink,
@@ -392,14 +391,6 @@ import {
   saveNotificationsEnabled,
   type NotificationPermission,
 } from "../../notifications/model/notifications";
-import {
-  installPendingUpdate,
-  packageManagedInstall,
-  packageManagerHint,
-  readAppVersion,
-  runUpdateFlow,
-  type UpdaterSnapshot,
-} from "../../../app/model/updater";
 
 import { SkillsPage } from "../../skills/ui/SkillsPage";
 import { ProjectNotificationSettings } from "../../notifications/ui/ProjectNotificationSettings";
@@ -447,7 +438,6 @@ type Props = {
   onDeleteSession: (sessionId: string) => void;
   onRestoreProject?: (path: string) => void;
   onDeleteProject?: (path: string) => void;
-  onOpenWhatsNew: (version: string) => void;
   collapsedProjectRailMode?: CollapsedProjectRailMode;
   onCollapsedProjectRailModeChange?: (mode: CollapsedProjectRailMode) => void;
 };
@@ -472,7 +462,6 @@ export function SettingsView({
   onDeleteSession,
   onRestoreProject,
   onDeleteProject,
-  onOpenWhatsNew,
   collapsedProjectRailMode,
   onCollapsedProjectRailModeChange,
 }: Props) {
@@ -583,9 +572,7 @@ export function SettingsView({
                 title={settingsSectionLabel(section)}
                 description={settingsSectionDescription(section)}
               />
-              {section === "general" ? (
-                <GeneralPage onOpenWhatsNew={onOpenWhatsNew} />
-              ) : null}
+              {section === "general" ? <GeneralPage /> : null}
               {section === "connections" ? <ConnectionsSettings /> : null}
               {section === "appearance" ? (
                 <AppearancePage appearance={appearance} />
@@ -758,11 +745,7 @@ function SettingsSearch({
   );
 }
 
-function GeneralPage({
-  onOpenWhatsNew,
-}: {
-  onOpenWhatsNew: (version: string) => void;
-}) {
+function GeneralPage() {
   const [soundsEnabled, setSoundsEnabled] = useState(loadSoundsEnabled);
   const [notificationsEnabled, setNotificationsEnabled] = useState(
     loadNotificationsEnabled,
@@ -962,10 +945,6 @@ function GeneralPage({
             />
           </Row>
         )}
-      </Group>
-
-      <Group title="About">
-        <UpdateRow onOpenWhatsNew={onOpenWhatsNew} />
       </Group>
     </>
   );
@@ -1758,96 +1737,6 @@ function LinearSettings() {
         </div>
       ) : null}
     </>
-  );
-}
-
-function UpdateRow({
-  onOpenWhatsNew,
-}: {
-  onOpenWhatsNew: (version: string) => void;
-}) {
-  const [snapshot, setSnapshot] = useState<UpdaterSnapshot>({
-    phase: "idle",
-    currentVersion: "…",
-  });
-
-  useEffect(() => {
-    let cancelled = false;
-    void Promise.all([readAppVersion(), packageManagedInstall()]).then(
-      ([currentVersion, packageManaged]) => {
-        if (cancelled) return;
-        setSnapshot((current) => ({
-          ...current,
-          currentVersion,
-          packageManaged: packageManaged ?? undefined,
-        }));
-      },
-    );
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const busy =
-    snapshot.phase === "checking" || snapshot.phase === "downloading";
-  const hasUpdate = snapshot.phase === "available";
-
-  const onClick = async () => {
-    if (busy) return;
-    if (hasUpdate) {
-      await installPendingUpdate(setSnapshot);
-      return;
-    }
-    await runUpdateFlow(true, setSnapshot);
-  };
-
-  const status =
-    snapshot.phase === "available"
-      ? `Version ${snapshot.availableVersion} is available.`
-      : snapshot.phase === "downloading"
-        ? `Downloading${snapshot.progress != null ? ` ${snapshot.progress}%` : "…"}`
-        : snapshot.phase === "checking"
-          ? "Checking for updates…"
-          : snapshot.phase === "current"
-            ? "You're on the latest version."
-            : snapshot.phase === "error"
-              ? (snapshot.error ?? "Update check failed.")
-              : snapshot.packageManaged
-                ? packageManagerHint(snapshot.packageManaged)
-                : "MonoCode updates itself from the release feed.";
-
-  return (
-    <Row
-      id="update"
-      label={
-        <span className="flex items-baseline gap-2">
-          Version
-          <span className="font-mono text-[12px] text-content/45">
-            {snapshot.currentVersion}
-          </span>
-        </span>
-      }
-      description={status}
-    >
-      <div className="flex items-center gap-2">
-        <SecondaryButton
-          onClick={() => onOpenWhatsNew(snapshot.currentVersion)}
-          disabled={snapshot.currentVersion === "…"}
-        >
-          What's new
-        </SecondaryButton>
-        <SecondaryButton onClick={() => void onClick()} disabled={busy}>
-          {busy ? (
-            <Loader className="size-3.5 animate-spin" aria-hidden />
-          ) : hasUpdate ? (
-            <ArrowDownCircle className="size-3.5 text-accent" aria-hidden />
-          ) : (
-            <RefreshCw className="size-3.5" strokeWidth={1.75} aria-hidden />
-          )}
-          {hasUpdate ? "Download" : "Check for updates"}
-        </SecondaryButton>
-      </div>
-    </Row>
   );
 }
 

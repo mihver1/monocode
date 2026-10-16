@@ -55,8 +55,8 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
     group: "app",
     label: "General",
     description:
-      "The build you are running, how MonoCode reaches you, and the panels it shows.",
-    keywords: "version update sounds notifications notes rail",
+      "How MonoCode reaches you, and the panels it shows.",
+    keywords: "sounds notifications notes rail",
   },
   {
     id: "connections",
@@ -209,12 +209,6 @@ export const SETTINGS_INDEX: SettingsEntry[] = [
     section: "worktrees",
     label: "Project worktrees",
     keywords: "git branch working copy create delete manage",
-  },
-  {
-    id: "update",
-    section: "general",
-    label: "Version",
-    keywords: "update upgrade release what's new build changelog",
   },
   {
     id: "sounds",

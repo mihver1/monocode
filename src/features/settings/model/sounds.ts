@@ -21,7 +21,6 @@ export type SoundCue =
   | "inputRequested"
   | "inboxUnseen"
   | "linkedActivity"
-  | "updateAvailable"
   | "switch"
   | "copy";
 
@@ -30,7 +29,6 @@ const CUES: Record<SoundCue, SoundName> = {
   inputRequested: "arrival",
   inboxUnseen: "bloom",
   linkedActivity: "chime",
-  updateAvailable: "arrival",
   switch: "toggle",
   copy: "scan",
 };
@@ -98,7 +96,6 @@ export function playCue(cue: SoundCue, subject?: NotificationSubject): boolean {
   return true;
 }
 
-let announcedUpdate: string | undefined;
 const announcedLinkedActivities = new Set<string>();
 
 /** Remember each session's activity across notice unmounts when switching tabs. */
@@ -123,19 +120,7 @@ export function announceLinkedActivity(
   });
 }
 
-/** One cue per available version, including a later probe of the same build. */
-export function announceUpdateAvailable(version: string | null) {
-  if (!version) {
-    announcedUpdate = undefined;
-    return;
-  }
-  if (announcedUpdate === version) return;
-  announcedUpdate = version;
-  playCue("updateAvailable");
-}
-
 /** Test helper: forget which notification cues already fired. */
 export function resetSoundCues() {
-  announcedUpdate = undefined;
   announcedLinkedActivities.clear();
 }

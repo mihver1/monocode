@@ -23,7 +23,6 @@ vi.mock("../../features/source-control/hooks/useProjectDiffStats", () => ({
 vi.mock("../../features/source-control/hooks/useGitFileStatuses", () => ({
   useGitFileStatuses: () => ({ files: new Map(), dirs: new Map() }),
 }));
-vi.mock("./SidebarUpdate", () => ({ SidebarUpdateFooter: () => null }));
 vi.mock("../../features/files/ui/FileTree", () => ({
   FileTree: ({ cwd, rootLabel }: { cwd: string; rootLabel?: string }) =>
     createElement("div", { "data-explorer-cwd": cwd }, rootLabel),

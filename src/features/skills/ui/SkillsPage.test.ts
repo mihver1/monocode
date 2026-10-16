@@ -205,7 +205,6 @@ describe("Settings skill preview", () => {
             onOpenSession: vi.fn(),
             onArchiveSession: vi.fn(),
             onDeleteSession: vi.fn(),
-            onOpenWhatsNew: vi.fn(),
           }),
         ),
       );
@@ -327,7 +326,6 @@ describe("Settings skill preview", () => {
             onOpenSession: vi.fn(),
             onArchiveSession: vi.fn(),
             onDeleteSession: vi.fn(),
-            onOpenWhatsNew: vi.fn(),
           }),
         ),
       );

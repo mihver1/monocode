@@ -7,6 +7,7 @@ import {
   disconnectJira,
   JIRA_CHANGE_EVENT,
   jiraConnected,
+  jiraProjectSelectionConfigured,
   listJiraProjects,
   loadHiddenJiraProjectIds,
   notifyJiraChange,
@@ -38,14 +39,18 @@ export function JiraSettings() {
   const [error, setError] = useState<string | null>(null);
   const [projects, setProjects] = useState<JiraProject[]>([]);
   const [hiddenIds, setHiddenIds] = useState(loadHiddenJiraProjectIds);
+  const [projectQuery, setProjectQuery] = useState("");
   const cloud = deployment === "cloud";
 
   const loadProjects = useCallback(async () => {
     try {
-      setProjects(await listJiraProjects());
+      const next = await listJiraProjects();
+      setProjects(next);
+      return next;
     } catch (err) {
       setProjects([]);
       setError(String(err instanceof Error ? err.message : err));
+      return [];
     }
   }, []);
 
@@ -89,8 +94,12 @@ export function JiraSettings() {
       setDeployment(deploymentOf(next));
       setToken("");
       clearInboxCache();
-      saveHiddenJiraProjectIds([]);
-      await loadProjects();
+      const loaded = await loadProjects();
+      // A new connection starts with nothing selected, so the inbox does not
+      // pull every project on the site before the user chooses.
+      if (!jiraProjectSelectionConfigured() && loaded.length > 0) {
+        saveHiddenJiraProjectIds(loaded.map((project) => project.id));
+      }
     } catch (err) {
       setError(String(err instanceof Error ? err.message : err));
     } finally {
@@ -266,21 +275,64 @@ export function JiraSettings() {
       ) : null}
       {connectedStatus ? (
         <div className="mt-4 flex flex-col gap-2">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-2">
             <span className="text-[13px] font-medium text-content">
               Projects
             </span>
-            <SecondaryButton
-              disabled={busy || checking}
-              onClick={() => void loadProjects()}
-            >
-              Refresh projects
-            </SecondaryButton>
+            <span className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={busy || projects.length === 0}
+                onClick={() => {
+                  clearInboxCache();
+                  saveHiddenJiraProjectIds([]);
+                }}
+                className="text-[12px] text-content/65 hover:text-content disabled:opacity-40"
+              >
+                All
+              </button>
+              <button
+                type="button"
+                disabled={busy || projects.length === 0}
+                onClick={() => {
+                  clearInboxCache();
+                  saveHiddenJiraProjectIds(projects.map((project) => project.id));
+                }}
+                className="text-[12px] text-content/65 hover:text-content disabled:opacity-40"
+              >
+                None
+              </button>
+              <SecondaryButton
+                disabled={busy || checking}
+                onClick={() => void loadProjects()}
+              >
+                Refresh projects
+              </SecondaryButton>
+            </span>
           </div>
           <p className="text-[12px] text-content/45">
-            Unchecked projects stay out of the inbox.
+            Only checked projects are fetched from Jira.
+            {projects.length > 0
+              ? ` ${projects.filter((project) => !hiddenIds.includes(project.id)).length} of ${projects.length} selected.`
+              : ""}
           </p>
-          {projects.map((project) => (
+          <input
+            aria-label="Find projects"
+            value={projectQuery}
+            placeholder="Find a project"
+            onChange={(event) => setProjectQuery(event.target.value)}
+            className="h-8 w-full rounded-md border border-content/10 bg-transparent px-2 text-[13px] text-content outline-none focus:border-content/20"
+          />
+          {projects
+            .filter((project) => {
+              const query = projectQuery.trim().toLowerCase();
+              if (!query) return true;
+              return (
+                project.name.toLowerCase().includes(query) ||
+                project.key.toLowerCase().includes(query)
+              );
+            })
+            .map((project) => (
             <label
               key={project.id}
               className="flex items-center gap-2 text-[13px] text-content"

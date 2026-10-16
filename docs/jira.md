@@ -36,7 +36,9 @@ post comments, ask about a ticket, or start work in a local project. Starting wo
 and asking about a ticket include its description and Jira identifier.
 
 Project selections are shared between Settings and the Inbox filter menu.
-Unchecked projects are excluded from fetching and background notifications.
+Only checked projects are requested from Jira. A new connection starts with
+none selected. Unchecked projects are excluded from fetching and background
+notifications.
 The inbox loads up to 40 open issues or 100 issues when including closed history,
 ordered by last update. An unfiltered all-status query covers the last year of
 activity. Long comment threads show the latest 50 comments, with a link to Jira.

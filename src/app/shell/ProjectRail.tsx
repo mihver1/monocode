@@ -69,8 +69,6 @@ import { ProjectLogoIcon } from "../../features/projects/ui/ProjectLogoIcon";
 import { ProjectMascot } from "../../features/projects/ui/ProjectMascot";
 import { RailAction, RailSearch } from "./RailAction";
 import { DevModeSlot, TabVisitNav } from "./TitleBar";
-import { SidebarUpdateFooter } from "./SidebarUpdate";
-import type { InstalledUpdate } from "../model/updateNotice";
 import { SettingsNav } from "./SettingsRail";
 import { Shimmer } from "../../shared/ui/Shimmer";
 import type { SettingsSectionId } from "../../features/settings/model/settings";
@@ -78,7 +76,6 @@ import { InboxNotificationMenu } from "../../features/inbox/ui/InboxNotification
 import { notificationMuteStatus } from "../../features/notifications/ui/notificationMuteActions";
 import { useProjectNotificationPreferences } from "../../features/notifications/hooks/useProjectNotificationPreferences";
 import { useNotificationProjects } from "../../features/notifications/hooks/useNotificationProjects";
-import { GithubStarPrompt } from "./GithubStarPrompt";
 import { Popover } from "../../shared/ui/Popover";
 import { OPEN_REMOTE_PROJECT_EVENT } from "../../features/connections/model/connections";
 import {
@@ -121,9 +118,6 @@ type Props = {
   onOpenNotificationSettings?: (projectPath?: string) => void;
   onSelectSettingsSection?: (section: SettingsSectionId) => void;
   onCloseSettings?: () => void;
-  updateNotice?: InstalledUpdate | null;
-  onOpenWhatsNew?: (version: string) => void;
-  onDismissUpdate?: () => void;
   /** The Monos section above the projects; absent while Monos are off. */
   monos?: MonoRailProps;
 };
@@ -160,9 +154,6 @@ export function ProjectRail({
   onOpenNotificationSettings,
   onSelectSettingsSection,
   onCloseSettings,
-  updateNotice = null,
-  onOpenWhatsNew,
-  onDismissUpdate,
   monos,
 }: Props) {
   const resize = useDragResize({
@@ -529,13 +520,7 @@ export function ProjectRail({
             groupCustomColors={groupCustomColors}
             groupMascots={groupMascots}
           />
-          <SidebarUpdateFooter
-            update={updateNotice}
-            onOpenWhatsNew={onOpenWhatsNew}
-            onDismissUpdate={onDismissUpdate}
-          />
           <div className="flex shrink-0 flex-col gap-px p-2">
-            <GithubStarPrompt />
             <RailAction
               label="Settings"
               icon={Settings}

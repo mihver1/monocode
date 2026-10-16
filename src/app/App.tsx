@@ -88,7 +88,6 @@ import { useStableValue } from "../shared/hooks/useStableValue";
 import { Sidebar } from "./shell/Sidebar";
 import { ApprovalToasts } from "../features/sessions/ui/ApprovalToasts";
 import { HarnessUpdateNotice } from "../features/providers/ui/HarnessUpdateNotice";
-import { WhatsNewDialog } from "./shell/WhatsNewDialog";
 import { ProviderSignInDialog } from "../features/sessions/ui/ProviderSignInDialog";
 import { TitleBar, type Tab as TitleTab } from "./shell/TitleBar";
 import { WindowControls } from "./shell/WindowControls";
@@ -165,7 +164,6 @@ import {
 } from "../features/settings/model/uiScale";
 import { resolveZoomKeybinding } from "../features/settings/model/zoomKeybinding";
 import { resolveAppShortcut } from "../features/settings/model/appShortcuts";
-import { runUpdateFlow } from "./model/updater";
 import {
   displayAttachments,
   prepareAttachments,
@@ -231,10 +229,7 @@ import {
   type SplitDir,
   type WorkspaceTab,
 } from "../features/workspace/model/layout";
-import {
-  releaseNotesForVersion,
-  releaseNotesTitle,
-} from "./model/releaseNotes";
+import { releaseNotesTitle } from "./model/releaseNotes";
 import { mergeOrderedSubset, orderByIds } from "../shared/lib/reorder";
 import {
   addTerminalToDock,
@@ -774,7 +769,6 @@ import {
   collectWorkspaceSnapshot,
   workspaceSnapshotKey,
 } from "../features/workspace/model/workspaceSnapshot";
-import type { InstalledUpdate } from "./model/updateNotice";
 import {
   bindResumedSessions,
   closeBusyWindow,
@@ -1031,7 +1025,6 @@ registerBuiltinHarnesses();
 type AppProps = {
   windowTransfer?: WindowTransferPayload | null;
   resumed?: ResumedWorkspace | null;
-  installedUpdate?: InstalledUpdate | null;
   history?: SessionSummary[];
   historyCwd?: string | null;
 };
@@ -1052,7 +1045,6 @@ export default function App(props: AppProps) {
 function Workspace({
   windowTransfer = null,
   resumed = null,
-  installedUpdate = null,
   history: bootHistory = [],
   historyCwd: bootHistoryCwd = null,
 }: AppProps) {
@@ -1273,8 +1265,6 @@ function Workspace({
     notes: false,
     automations: false,
   });
-  const [updateNotice, setUpdateNotice] = useState(installedUpdate);
-  const [whatsNewVersion, setWhatsNewVersion] = useState<string | null>(null);
   const monosEnabled = useSyncExternalStore(
     subscribeMonosEnabled,
     loadMonosEnabled,
@@ -1523,8 +1513,6 @@ function Workspace({
   const sessionNavigationIdsRef = useRef<readonly string[]>([]);
   const filePickerOpenRef = useRef(filePickerOpen);
   filePickerOpenRef.current = filePickerOpen;
-  const whatsNewVersionRef = useRef(whatsNewVersion);
-  whatsNewVersionRef.current = whatsNewVersion;
   useEffect(() => {
     const liveSessionIds = new Set(sessions.map((session) => session.id));
     for (const [key, request] of btwRequestsRef.current) {
@@ -2704,18 +2692,6 @@ function Workspace({
     },
     [active?.id, appendTab],
   );
-
-  const onOpenWhatsNew = useCallback((version: string) => {
-    const document = releaseNotesForVersion(version);
-    if (!document) {
-      void message(
-        "Release notes for this version are not available in this build.",
-        { title: "MonoCode" },
-      );
-      return;
-    }
-    setWhatsNewVersion(document.source.version);
-  }, []);
 
   const createWorkspaceTab = useCallback(
     (cwd: string, focus?: WorktreeFocus) => {
@@ -5563,8 +5539,7 @@ function Workspace({
             notesViewOpenRef.current ||
             automationsViewOpenRef.current ||
             settingsOpenRef.current ||
-            filePickerOpenRef.current ||
-            whatsNewVersionRef.current,
+            filePickerOpenRef.current,
           ),
         },
         (sessionId) => {
@@ -12119,8 +12094,7 @@ function Workspace({
             notesViewOpenRef.current ||
             automationsViewOpenRef.current ||
             settingsOpenRef.current ||
-            filePickerOpenRef.current ||
-            Boolean(whatsNewVersionRef.current);
+            filePickerOpenRef.current;
           if (
             !shouldHandleListNavigation({
               blockedTarget,
@@ -12318,9 +12292,6 @@ function Workspace({
       listen("open_inbox", () => actions.current.onOpenInbox()),
       listen("open_notes", () => actions.current.onOpenNotes()),
       listen("open_settings", () => actions.current.openSettings()),
-      listen("check_for_updates", () => {
-        void runUpdateFlow(true);
-      }),
       listen("sidebar_opacity", () => {
         actions.current.openSettings("appearance");
       }),
@@ -12801,8 +12772,6 @@ function Workspace({
       onDeleteRailMono,
     ],
   );
-  const onDismissUpdate = useCallback(() => setUpdateNotice(null), []);
-
   const chromeSurfaceOpen =
     searchViewOpen ||
     settingsOpen ||
@@ -12985,9 +12954,6 @@ function Workspace({
               onOpenNotificationSettings={onOpenNotificationSettings}
               onSelectSettingsSection={onSelectSettingsSection}
               onCloseSettings={onCloseSettings}
-              updateNotice={updateNotice}
-              onOpenWhatsNew={onOpenWhatsNew}
-              onDismissUpdate={onDismissUpdate}
             />
 
             <div className="body-glass flex min-h-0 min-w-0 flex-1 flex-col">
@@ -13369,7 +13335,6 @@ function Workspace({
                   onDeleteProject={(path) =>
                     onRemoveProject(path, { purgeData: true })
                   }
-                  onOpenWhatsNew={onOpenWhatsNew}
                   collapsedProjectRailMode={collapsedProjectRailMode}
                   onCollapsedProjectRailModeChange={setCollapsedProjectRailMode}
                 />
@@ -13466,12 +13431,6 @@ function Workspace({
             onOpenSettings={() => openSettings("general", "notifications")}
             onHeightChange={setReminderNoticesHeight}
           />
-          {whatsNewVersion ? (
-            <WhatsNewDialog
-              version={whatsNewVersion}
-              onClose={() => setWhatsNewVersion(null)}
-            />
-          ) : null}
           {remoteProjectDialogOpen ? (
             <AddRemoteProjectDialog
               onCancel={() => setRemoteProjectDialogOpen(false)}

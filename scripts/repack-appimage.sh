@@ -11,10 +11,7 @@ set -euo pipefail
 # bundled library tree and the linuxdeploy GTK hook are dropped, and the
 # AppImage requires webkit2gtk-4.1 on the host, like the .deb and .rpm do.
 #
-# This rewrite happens after `tauri build`. Linux currently sets
-# bundle.createUpdaterArtifacts to false in tauri.linux.conf.json. If that is
-# ever enabled, the .AppImage.sig Tauri writes is for the pre-repack file and
-# must be regenerated after this script, or the updater will reject the image.
+# This rewrite happens after `tauri build`.
 #
 # Usage: scripts/repack-appimage.sh [path/to/MonoCode_x.y.z_amd64.AppImage]
 

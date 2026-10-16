@@ -119,22 +119,6 @@ fn menu_item(
 
 pub fn dispatch(app: &AppHandle, id: &str) {
     match id {
-        "help_website" => {
-            let _ = open::that("https://usemono.dev");
-        }
-        "help_github" => {
-            let _ = open::that("https://github.com/hardbeat920/monocode");
-        }
-        "help_report_bug" => {
-            let _ = open::that(
-                "https://github.com/hardbeat920/monocode/issues/new?template=bug_report.yml",
-            );
-        }
-        "help_request_feature" => {
-            let _ = open::that(
-                "https://github.com/hardbeat920/monocode/issues/new?template=feature_request.yml",
-            );
-        }
         "new_window" => {
             let _ = crate::window::open_new_window(app);
         }
@@ -149,8 +133,7 @@ pub fn dispatch(app: &AppHandle, id: &str) {
         | "split_right" | "split_down" | "focus_left" | "focus_right" | "focus_up"
         | "focus_down" | "sidebar_opacity" | "open_project" | "go_to_file" | "open_search"
         | "open_inbox" | "open_notes" | "find_in_project" | "find" | "new_terminal"
-        | "new_terminal_tab" | "toggle_terminal" | "open_model_picker" | "open_settings"
-        | "check_for_updates" => {
+        | "new_terminal_tab" | "toggle_terminal" | "open_model_picker" | "open_settings" => {
             let _ = app.emit(id, ());
         }
         // New Tab, Close Tab, Sidebar, Zoom, Reload, Command Palette, and Close All Tabs target
@@ -205,8 +188,6 @@ fn build(
         "App: Settings",
         overrides,
     )?;
-    let check_for_updates =
-        MenuItemBuilder::with_id("check_for_updates", "Check for Updates…").build(app)?;
     let new_window = menu_item(
         app,
         "new_window",
@@ -520,7 +501,6 @@ fn build(
             .about(Some(AboutMetadata::default()))
             .separator()
             .item(&open_settings)
-            .item(&check_for_updates)
             .separator()
             .hide()
             .hide_others()
@@ -534,19 +514,7 @@ fn build(
             .minimize()
             .maximize()
             .build()?;
-        let website = MenuItemBuilder::with_id("help_website", "MonoCode Website").build(app)?;
-        let github = MenuItemBuilder::with_id("help_github", "View on GitHub").build(app)?;
-        let report_bug = MenuItemBuilder::with_id("help_report_bug", "Report a Bug…").build(app)?;
-        let request_feature =
-            MenuItemBuilder::with_id("help_request_feature", "Request a Feature…").build(app)?;
-        let help = SubmenuBuilder::with_id(app, tauri::menu::HELP_SUBMENU_ID, "Help")
-            .item(&website)
-            .item(&github)
-            .separator()
-            .item(&report_bug)
-            .item(&request_feature)
-            .build()?;
-        return Menu::with_items(app, &[&app_menu, &file, &edit, &view, &window_menu, &help]);
+        return Menu::with_items(app, &[&app_menu, &file, &edit, &view, &window_menu]);
     }
 
     #[allow(unreachable_code)]

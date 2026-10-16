@@ -40,7 +40,7 @@
     }
   },
   "bundle": {
-    "createUpdaterArtifacts": true,
+    "createUpdaterArtifacts": false,
     "active": true,
     "targets": "all",
     "icon": [
@@ -67,12 +67,6 @@
           "webkit2gtk4.1"
         ]
       }
-    }
-  },
-  "plugins": {
-    "updater": {
-      "pubkey": "",
-      "endpoints": []
     }
   }
 }

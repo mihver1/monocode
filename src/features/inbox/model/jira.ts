@@ -68,6 +68,7 @@ export type JiraStatus = {
 };
 
 const PROJECT_IDS_KEY = "monocode.jiraHiddenProjects";
+const SELECTION_KEY = "monocode.jiraProjectSelectionSet";
 export const JIRA_CHANGE_EVENT = "monocode:jira-change";
 
 // Keyed by issue key (ENG-42): the REST paths and browse URLs both take it.
@@ -112,6 +113,7 @@ export async function disconnectJira(): Promise<JiraStatus> {
     deployment: "cloud",
   });
   clearJiraCache();
+  clearJiraProjectSelection();
   return status;
 }
 
@@ -119,7 +121,11 @@ export function listJiraProjects(): Promise<JiraProject[]> {
   return invoke<JiraProject[]>("jira_list_projects");
 }
 
-/** `null` means do not filter by project. `[]` means every known project is hidden. */
+/**
+ * Project ids to request from Jira.
+ * `null` means the selection was never narrowed, so the query stays site-wide.
+ * `[]` means every known project is unchecked and nothing should be fetched.
+ */
 export function jiraProjectIdsForFetch(
   projects: readonly JiraProject[],
   hiddenIds: readonly string[],
@@ -206,6 +212,15 @@ export async function jiraIssueComment(
   return url;
 }
 
+/** False until Settings or the Inbox filter saves a project choice. */
+export function jiraProjectSelectionConfigured(): boolean {
+  try {
+    return localStorage.getItem(SELECTION_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
 export function loadHiddenJiraProjectIds(): string[] {
   try {
     const raw = localStorage.getItem(PROJECT_IDS_KEY);
@@ -223,6 +238,17 @@ export function loadHiddenJiraProjectIds(): string[] {
 export function saveHiddenJiraProjectIds(ids: string[]) {
   try {
     localStorage.setItem(PROJECT_IDS_KEY, JSON.stringify(ids));
+    localStorage.setItem(SELECTION_KEY, "1");
+  } catch {
+    // private mode / quota
+  }
+  notifyJiraChange();
+}
+
+export function clearJiraProjectSelection() {
+  try {
+    localStorage.removeItem(PROJECT_IDS_KEY);
+    localStorage.removeItem(SELECTION_KEY);
   } catch {
     // private mode / quota
   }

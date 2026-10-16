@@ -65,7 +65,6 @@ async function render() {
         onOpenSession: vi.fn(),
         onArchiveSession: vi.fn(),
         onDeleteSession: vi.fn(),
-        onOpenWhatsNew: vi.fn(),
       }),
     ),
   );

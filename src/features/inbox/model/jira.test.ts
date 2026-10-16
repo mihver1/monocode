@@ -81,7 +81,7 @@ describe("Jira inbox", () => {
     expect(invoke).toHaveBeenCalledWith("jira_list_issues", {
       assignedToMe: true,
       state: "open",
-      projectIds: [],
+      projectIds: ["10000", "10001"],
       limit: undefined,
     });
     expect(inboxItemStatus(issue)).toBe("Open");

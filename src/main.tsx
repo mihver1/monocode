@@ -19,7 +19,6 @@ import {
 import { homeDir } from "./platform/tauri/fs";
 import { setHomeDir } from "./shared/lib/paths";
 import { installNativeContextMenuGuard } from "./shared/lib/nativeContextMenu";
-import { consumeInstalledUpdate } from "./app/model/updateNotice";
 import { initializeProviderBinaryPaths } from "./features/providers/model/providerBinaryPaths";
 // Lets file commands reach a connected machine for `remote://` paths.
 import "./features/connections/model/remoteCommands";
@@ -104,14 +103,12 @@ void Promise.all([
     { default: App },
   ]) => {
     performance.mark("monocode:workspace-ready");
-    const installedUpdate = windowTransfer ? null : consumeInstalledUpdate();
     ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
       <React.StrictMode>
         <BootGate>
           <App
             windowTransfer={windowTransfer}
             resumed={resumed}
-            installedUpdate={installedUpdate}
             history={history}
             historyCwd={historyCwd}
           />

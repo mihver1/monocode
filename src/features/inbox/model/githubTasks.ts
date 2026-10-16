@@ -167,8 +167,6 @@ export type GithubStatus = {
   authenticated: boolean;
 };
 
-export type GithubStarStatus = "starred" | "notStarred" | "unavailable";
-
 export type InboxListResult = {
   items: InboxItem[];
   errors: InboxProviderErrors;
@@ -273,16 +271,6 @@ export function inboxListIsFresh(
 
 export function githubStatus(): Promise<GithubStatus> {
   return invoke<GithubStatus>("git_github_status");
-}
-
-/** Whether the active GitHub CLI account has starred MonoCode. */
-export function githubMonocodeStarStatus(): Promise<GithubStarStatus> {
-  return invoke<GithubStarStatus>("github_monocode_star_status");
-}
-
-/** Star MonoCode for the active GitHub CLI account. */
-export function starMonocodeOnGithub(): Promise<void> {
-  return invoke<void>("github_star_monocode");
 }
 
 export async function githubRepo(cwd: string): Promise<string> {
@@ -944,15 +932,17 @@ function linearIssueToInboxItem(issue: LinearIssue): InboxItem {
 
 async function fetchJiraInboxItems(query: InboxQuery): Promise<InboxItem[]> {
   const hiddenIds = query.jiraHiddenProjectIds ?? loadHiddenJiraProjectIds();
-  let projectIds: string[] | null = null;
-  if (hiddenIds.length > 0) {
-    projectIds = jiraProjectIdsForFetch(await listJiraProjects(), hiddenIds);
-    if (projectIds?.length === 0) return [];
-  }
+  const projects = await listJiraProjects();
+  // null means every listed project is included. Send those ids so the search
+  // stays inside the projects the user can see, instead of the whole site.
+  const selected = jiraProjectIdsForFetch(projects, hiddenIds);
+  if (selected?.length === 0) return [];
+  const projectIds = selected ?? projects.map((project) => project.id);
+  if (projects.length > 0 && projectIds.length === 0) return [];
   const issues = await listJiraIssues({
     assignedToMe: query.assignedToMe,
     state: query.state,
-    projectIds: projectIds ?? [],
+    projectIds: projects.length === 0 ? [] : projectIds,
     limit: query.state === "all" ? INBOX_ALL_LIMIT : undefined,
   });
   const hidden = new Set(hiddenIds);

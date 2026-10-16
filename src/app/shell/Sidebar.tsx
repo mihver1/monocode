@@ -129,7 +129,6 @@ import type {
 import type { LiveAgent } from "../../features/sessions/model/liveAgents";
 import type { SessionSummary } from "../../features/sessions/data/sessionStore";
 import type { SettingsSectionId } from "../../features/settings/model/settings";
-import type { InstalledUpdate } from "../model/updateNotice";
 import { TAB_GROUP_COLORS } from "../../features/workspace/model/tabGroups";
 import { useDragResize } from "../../shared/hooks/useDragResize";
 import { useGitFileStatuses } from "../../features/source-control/hooks/useGitFileStatuses";
@@ -175,9 +174,7 @@ import {
   type SessionReminder,
 } from "../../features/sessions/model/sessionReminders";
 import { SessionsEmpty } from "../../features/sessions/ui/SessionsEmpty";
-import { SidebarUpdateFooter } from "./SidebarUpdate";
 import { SourceControl } from "../../features/source-control/ui/SourceControl";
-import { GithubStarPrompt } from "./GithubStarPrompt";
 import {
   isMonoSession,
   listMonos,
@@ -346,9 +343,6 @@ type Props = {
   onOpenNotificationSettings?: (projectPath?: string) => void;
   onSelectSettingsSection?: (section: SettingsSectionId) => void;
   onCloseSettings?: () => void;
-  updateNotice?: InstalledUpdate | null;
-  onOpenWhatsNew?: (version: string) => void;
-  onDismissUpdate?: () => void;
   /** The Monos on the rail; absent while Monos are off. */
   monos?: MonoRailProps;
   /** A Mono fills the main area, which has no project sidebar. */
@@ -441,9 +435,6 @@ function SidebarComponent({
   onOpenNotificationSettings,
   onSelectSettingsSection,
   onCloseSettings,
-  updateNotice = null,
-  onOpenWhatsNew,
-  onDismissUpdate,
   monos,
   monoViewActive = false,
 }: Props) {
@@ -2203,13 +2194,7 @@ function SidebarComponent({
               onSelect={onSelectAgent}
               bottomSpacing={compactRailVisible}
             />
-            <SidebarUpdateFooter
-              update={updateNotice}
-              onOpenWhatsNew={onOpenWhatsNew}
-              onDismissUpdate={onDismissUpdate}
-            />
             <div className="flex shrink-0 flex-col gap-px p-2 empty:hidden">
-              <GithubStarPrompt />
               {!compactProjectRail ? (
                 <RailAction
                   label="Settings"
@@ -2370,9 +2355,6 @@ function SidebarComponent({
           onOpenNotificationSettings={onOpenNotificationSettings}
           onSelectSettingsSection={onSelectSettingsSection}
           onCloseSettings={onCloseSettings}
-          updateNotice={updateNotice}
-          onOpenWhatsNew={onOpenWhatsNew}
-          onDismissUpdate={onDismissUpdate}
           monos={railMonos}
         />
       ) : null}

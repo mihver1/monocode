@@ -11,7 +11,6 @@ vi.mock("cuelume", () => ({
 }));
 
 import {
-  announceUpdateAvailable,
   loadSoundsEnabled,
   playCue,
   resetSoundCues,
@@ -84,8 +83,6 @@ describe("sounds", () => {
     expect(play).toHaveBeenCalledWith("bloom");
     playCue("linkedActivity", { projectId: "work", category: "pullRequests" });
     expect(play).toHaveBeenCalledWith("chime");
-    playCue("updateAvailable");
-    expect(play).toHaveBeenCalledWith("arrival");
     playCue("switch");
     expect(play).toHaveBeenCalledWith("toggle");
     playCue("copy");
@@ -107,8 +104,8 @@ describe("sounds", () => {
     });
     expect(play).not.toHaveBeenCalled();
     playCue("inboxUnseen", { projectId: "work", category: "pullRequests" });
-    playCue("updateAvailable");
-    expect(play.mock.calls).toEqual([["bloom"], ["arrival"]]);
+    playCue("switch");
+    expect(play.mock.calls).toEqual([["bloom"], ["toggle"]]);
   });
 
   it("does not catch up on project activity from before global sounds were re-enabled", () => {
@@ -135,13 +132,4 @@ describe("sounds", () => {
     }
   });
 
-  it("dings once per update version", () => {
-    announceUpdateAvailable("0.2.0");
-    expect(play).toHaveBeenCalledTimes(1);
-    expect(play).toHaveBeenCalledWith("arrival");
-    announceUpdateAvailable("0.2.0");
-    expect(play).toHaveBeenCalledTimes(1);
-    announceUpdateAvailable("0.2.1");
-    expect(play).toHaveBeenCalledTimes(2);
-  });
 });
