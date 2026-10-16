@@ -37,11 +37,30 @@ and asking about a ticket include its description and Jira identifier.
 
 Project selections are shared between Settings and the Inbox filter menu.
 Only checked projects are requested from Jira. A new connection starts with
-none selected. Unchecked projects are excluded from fetching and background
-notifications.
+none selected, independently of project discovery. None, an unconfigured
+selection, an empty catalog, or failed discovery never triggers a site-wide
+issue search. All selects only the projects in the current catalog; newly
+discovered projects stay unchecked. Unchecked projects are excluded from
+fetching, background notifications, and automation, including responses that
+arrive after the selection changes.
+
+Selections are bound to the deployment, server URL (including context path),
+and verified account. Changing any of these requires a new selection. Rotating
+a token for the same verified account retains its selection. Older credentials
+without a verified account ID require confirmation after reconnecting.
+
+Earlier versions stored excluded IDs without their original project catalog.
+Those settings now require choosing projects again, with an explanation in
+Settings. They start with none selected because reconstructing the complement
+from today's catalog could silently include new projects.
+
+Project discovery falls back from `/project/search` to `/project` only on the
+first Data Center page returning HTTP 404, 405, or 501. Cloud errors,
+authentication failures, rate limits, transport/JSON errors, and later-page
+errors are returned unchanged.
 The inbox loads up to 40 open issues or 100 issues when including closed history,
-ordered by last update. An unfiltered all-status query covers the last year of
-activity. Long comment threads show the latest 50 comments, with a link to Jira.
+ordered by last update within the selected projects. Long comment threads show
+the latest 50 comments, with a link to Jira.
 
 Automations offer **Jira → Issue appeared** after connecting. They run in the
 automation's selected local project when a Jira issue first appears in the polled

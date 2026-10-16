@@ -16,7 +16,6 @@ import {
   type SessionChangesSource,
   type WorkspaceTab,
 } from "./layout";
-import type { ReleaseNotesTabSource } from "../../../app/model/releaseNotes";
 import {
   clampDockSize,
   isDockSide,
@@ -181,7 +180,6 @@ function withoutInboxSessions(snapshot: WorkspaceSnapshot): WorkspaceSnapshot {
   const inboxIds = snapshot.sessions
     .filter((session) => session.inboxAsk)
     .map((session) => session.id);
-  if (inboxIds.length === 0) return snapshot;
   let tabs = snapshot.tabs;
   for (const id of inboxIds) {
     tabs = tabs.flatMap((tab) => {
@@ -468,7 +466,7 @@ function sanitizeTab(raw: unknown): WorkspaceTab | null {
       ? value.focusedId
       : leafIds(layout)[0];
   if (!focusedId) return null;
-  return {
+  let tab: WorkspaceTab | null = {
     kind: "session",
     id: value.id,
     layout,
@@ -481,6 +479,19 @@ function sanitizeTab(raw: unknown): WorkspaceTab | null {
       ? { groupId: value.groupId }
       : {}),
   };
+  // An obsolete What's New pane must not discard its sibling files/sessions.
+  for (const pane of [...editorPanes, ...terminalPanes]) {
+    if (pane.files.length === 0 && tab) tab = closeLeaf(tab, pane.id);
+  }
+  return tab
+    ? {
+        ...tab,
+        editorPanes: tab.editorPanes.filter((pane) => pane.files.length > 0),
+        terminalPanes: tab.terminalPanes?.filter(
+          (pane) => pane.files.length > 0,
+        ),
+      }
+    : null;
 }
 
 function sanitizeLayout(raw: unknown): LayoutNode | null {
@@ -544,7 +555,11 @@ function sanitizePane(raw: unknown): EditorPane | null {
   const files = value.files
     .map(sanitizeFile)
     .filter((file): file is FilePaneTab => file != null);
-  if (files.length === 0) return null;
+  if (files.length === 0) {
+    return value.files.length > 0 && value.files.every(isSavedReleaseNotes)
+      ? { id: value.id, files: [], activeFileId: "" }
+      : null;
+  }
   const activeFileId =
     typeof value.activeFileId === "string" &&
     files.some((file) => file.id === value.activeFileId)
@@ -556,19 +571,17 @@ function sanitizePane(raw: unknown): EditorPane | null {
 function sanitizeFile(raw: unknown): FilePaneTab | null {
   if (!raw || typeof raw !== "object") return null;
   const value = raw as Record<string, unknown>;
+  if (isSavedReleaseNotes(value)) return null;
   if (typeof value.id !== "string" || !value.id) return null;
   if (typeof value.path !== "string" || !value.path) return null;
   if (typeof value.cwd !== "string" || !value.cwd) return null;
   const plan = sanitizePlan(value.plan);
-  const hasReleaseNotes = "releaseNotes" in value;
-  const releaseNotes = sanitizeReleaseNotes(value.releaseNotes);
   const hasCommit = "commit" in value;
   const commit = sanitizeCommit(value.commit);
   const hasSessionChanges = "sessionChanges" in value;
   const sessionChanges = sanitizeSessionChanges(value.sessionChanges);
   const hasRemoteFile = "remoteFile" in value;
   const remoteFile = sanitizeRemoteFile(value.remoteFile);
-  if (hasReleaseNotes && !releaseNotes) return null;
   if (hasCommit && !commit) return null;
   if (hasSessionChanges && !sessionChanges) return null;
   if (hasRemoteFile && !remoteFile) return null;
@@ -579,31 +592,15 @@ function sanitizeFile(raw: unknown): FilePaneTab | null {
   if (remoteFile && !remoteOwner) return null;
   if (
     remoteFile &&
-    (value.plan != null ||
-      releaseNotes ||
-      commit ||
-      sessionChanges ||
-      value.terminal === true)
+    (value.plan != null || commit || sessionChanges || value.terminal === true)
   )
     return null;
   if (
     sessionChanges &&
     (value.plan != null ||
-      releaseNotes != null ||
       commit != null ||
       value.changes === true ||
       value.terminal === true)
-  ) {
-    return null;
-  }
-  if (
-    releaseNotes &&
-    (value.plan != null ||
-      value.review === true ||
-      value.changes === true ||
-      sessionChanges != null ||
-      value.terminal === true ||
-      commit != null)
   ) {
     return null;
   }
@@ -625,7 +622,6 @@ function sanitizeFile(raw: unknown): FilePaneTab | null {
       ? { projectCwd: value.projectCwd }
       : {}),
     ...(plan ? { plan } : {}),
-    ...(releaseNotes ? { releaseNotes } : {}),
     ...(commit ? { commit } : {}),
     ...(sessionChanges ? { sessionChanges, review: true } : {}),
     ...(value.review === true ? { review: true } : {}),
@@ -682,11 +678,13 @@ function sanitizeCommit(raw: unknown): CommitTabSource | undefined {
   };
 }
 
-function sanitizeReleaseNotes(raw: unknown): ReleaseNotesTabSource | undefined {
-  if (!raw || typeof raw !== "object") return undefined;
-  const version = (raw as Record<string, unknown>).version;
-  if (typeof version !== "string" || !version.trim()) return undefined;
-  return { version: version.trim() };
+function isSavedReleaseNotes(raw: unknown): boolean {
+  if (!raw || typeof raw !== "object") return false;
+  const value = raw as Record<string, unknown>;
+  return (
+    "releaseNotes" in value ||
+    (typeof value.path === "string" && value.path.startsWith("release-notes:"))
+  );
 }
 
 function sanitizeProjectTerminal(raw: unknown): ProjectTerminalDock | null {

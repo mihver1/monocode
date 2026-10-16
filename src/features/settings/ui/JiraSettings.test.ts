@@ -4,7 +4,11 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import { JiraSettings } from "./JiraSettings";
-import { loadHiddenJiraProjectIds } from "../../inbox/model/jira";
+import {
+  jiraProjectSelectionConfigured,
+  loadSelectedJiraProjectIds,
+  type JiraStatus,
+} from "../../inbox/model/jira";
 import { saveMaskEmails } from "../model/displayPrefs";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
@@ -12,6 +16,7 @@ vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
 
 let container: HTMLDivElement;
 let root: Root;
+let status: JiraStatus;
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   localStorage.clear();
@@ -19,22 +24,32 @@ beforeEach(() => {
   document.body.append(container);
   root = createRoot(container);
   vi.mocked(invoke).mockReset();
+  status = {
+    connected: false,
+    connectionId: "",
+    site: "",
+    email: "",
+    deployment: "cloud",
+  };
   vi.mocked(invoke).mockImplementation(async (command, args) => {
-    if (command === "jira_status")
-      return { connected: false, site: "", email: "", deployment: "cloud" };
+    if (command === "jira_status") return status;
     if (command === "jira_set_config") {
       const config = args as {
         site: string;
         email: string;
         token: string;
-        deployment?: string;
+        deployment?: JiraStatus["deployment"];
       };
-      return {
+      status = {
         connected: Boolean(config.token),
+        connectionId: config.token
+          ? `${config.deployment}:${config.site}:${config.email}`
+          : "",
         site: config.site,
         email: config.email,
         deployment: config.deployment ?? "cloud",
       };
+      return status;
     }
     if (command === "jira_list_projects")
       return [{ id: "10000", key: "ENG", name: "Engineering" }];
@@ -96,10 +111,10 @@ it("connects Jira, synchronizes project filters, and disconnects", async () => {
     'input[type="checkbox"]',
   )!;
   expect(project.checked).toBe(false);
-  expect(loadHiddenJiraProjectIds()).toEqual(["10000"]);
+  expect(loadSelectedJiraProjectIds()).toEqual([]);
   expect(container.textContent).toContain("0 of 1 selected");
   await act(async () => project.click());
-  expect(loadHiddenJiraProjectIds()).toEqual([]);
+  expect(loadSelectedJiraProjectIds()).toEqual(["10000"]);
   expect(project.checked).toBe(true);
   const disconnect = [...container.querySelectorAll("button")].find(
     (button) => button.textContent === "Disconnect",
@@ -136,6 +151,70 @@ it("connects Jira Data Center with a personal access token", async () => {
   });
   expect(container.textContent).toContain("Jira Data Center");
   expect(container.querySelector("form")).toBeNull();
+});
+
+it("keeps projects unchecked after failed initial discovery and successful Refresh", async () => {
+  const original = vi.mocked(invoke).getMockImplementation()!;
+  let fail = true;
+  vi.mocked(invoke).mockImplementation(async (command, args) => {
+    if (command === "jira_list_projects" && fail)
+      throw new Error("Discovery unavailable");
+    return original(command, args);
+  });
+  await act(async () => root.render(createElement(JiraSettings)));
+  await input("Jira site", "acme.atlassian.net");
+  await input("Atlassian email", "ada@example.com");
+  await input("Jira API token", "secret");
+  await submit();
+  expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+    "Discovery unavailable",
+  );
+  expect(jiraProjectSelectionConfigured()).toBe(false);
+  fail = false;
+  const refresh = [...container.querySelectorAll("button")].find(
+    (button) => button.textContent === "Refresh projects",
+  )!;
+  await act(async () => refresh.click());
+  expect(
+    container.querySelector<HTMLInputElement>('input[type="checkbox"]')!
+      .checked,
+  ).toBe(false);
+  expect(container.textContent).toContain("0 of 1 selected");
+  expect(container.querySelector('[role="alert"]')).toBeNull();
+});
+
+it("keeps newly discovered projects unchecked after All and None", async () => {
+  status = {
+    connected: true,
+    connectionId: "existing-connection",
+    site: "acme",
+    email: "ada@example.com",
+    deployment: "cloud",
+  };
+  const original = vi.mocked(invoke).getMockImplementation()!;
+  let projects = [{ id: "10000", key: "ENG", name: "Engineering" }];
+  vi.mocked(invoke).mockImplementation(async (command, args) =>
+    command === "jira_list_projects" ? projects : original(command, args),
+  );
+  await act(async () => root.render(createElement(JiraSettings)));
+  const button = (text: string) =>
+    [...container.querySelectorAll("button")].find(
+      (entry) => entry.textContent === text,
+    )!;
+  await act(async () => button("All").click());
+  expect(loadSelectedJiraProjectIds()).toEqual(["10000"]);
+  projects = [...projects, { id: "10001", key: "OPS", name: "Operations" }];
+  await act(async () => button("Refresh projects").click());
+  expect(
+    [
+      ...container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'),
+    ].map((entry) => entry.checked),
+  ).toEqual([true, false]);
+  await act(async () => button("None").click());
+  projects = [...projects, { id: "10002", key: "NEW", name: "New" }];
+  await act(async () => button("Refresh projects").click());
+  expect(loadSelectedJiraProjectIds()).toEqual([]);
+  expect(container.textContent).toContain("0 of 3 selected");
 });
 
 it("shows authentication errors without claiming a successful connection", async () => {

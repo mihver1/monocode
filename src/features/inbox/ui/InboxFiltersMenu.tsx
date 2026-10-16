@@ -31,7 +31,7 @@ type Props = {
   linearTeams: LinearTeam[];
   hiddenLinearTeamIds: string[];
   jiraProjects: JiraProject[];
-  hiddenJiraProjectIds: string[];
+  selectedJiraProjectIds: string[];
   source: InboxSource;
   filters: InboxFilters;
   onChange: (filters: InboxFilters) => void;
@@ -74,7 +74,7 @@ export function InboxFiltersMenu({
   linearTeams,
   hiddenLinearTeamIds,
   jiraProjects,
-  hiddenJiraProjectIds,
+  selectedJiraProjectIds,
   source,
   filters,
   onChange,
@@ -87,9 +87,10 @@ export function InboxFiltersMenu({
   const hiddenTeams = new Set(hiddenLinearTeamIds);
   const hiddenKinds = new Set(filters.hiddenKinds);
   const teamsActive = source === "linear" && hiddenLinearTeamIds.length > 0;
-  const hiddenJira = new Set(hiddenJiraProjectIds);
+  const selectedJira = new Set(selectedJiraProjectIds);
   const jiraProjectsActive =
-    source === "jira" && hiddenJiraProjectIds.length > 0;
+    source === "jira" &&
+    jiraProjects.some((project) => !selectedJira.has(project.id));
   const tracker = isTrackerSource(source);
 
   const toggleAssigned = () => {
@@ -118,7 +119,7 @@ export function InboxFiltersMenu({
   };
 
   const toggleJiraProject = (id: string) => {
-    const next = new Set(hiddenJira);
+    const next = new Set(selectedJira);
     if (next.has(id)) next.delete(id);
     else next.add(id);
     onJiraProjectsChange([...next]);
@@ -254,7 +255,7 @@ export function InboxFiltersMenu({
             <FilterItem
               key={project.id}
               label={project.name || project.key}
-              checked={!hiddenJira.has(project.id)}
+              checked={selectedJira.has(project.id)}
               onClick={() => toggleJiraProject(project.id)}
             />
           ))}
@@ -293,7 +294,9 @@ export function InboxFiltersMenu({
         filters,
         source,
         hiddenLinearTeamIds,
-        hiddenJiraProjectIds,
+        jiraProjects
+          .filter((project) => !selectedJira.has(project.id))
+          .map((project) => project.id),
       ) ? (
         <>
           <div role="separator" className="my-1 h-px bg-content/10" />
@@ -304,7 +307,8 @@ export function InboxFiltersMenu({
             onClick={() => {
               onChange(DEFAULT_INBOX_FILTERS);
               if (teamsActive) onLinearTeamsChange([]);
-              if (jiraProjectsActive) onJiraProjectsChange([]);
+              if (jiraProjectsActive)
+                onJiraProjectsChange(jiraProjects.map((project) => project.id));
             }}
             className="flex h-7 w-full items-center rounded-lg px-2 text-left text-[13px] leading-none text-content/70 hover:bg-content/5 hover:text-content"
           >

@@ -41,7 +41,11 @@ import {
   subscribeLinkedSessionSeen,
 } from "../model/linkedSessionSeen";
 import { loadHiddenLinearTeamIds } from "../model/linear";
-import { JIRA_CHANGE_EVENT, loadHiddenJiraProjectIds } from "../model/jira";
+import {
+  JIRA_CHANGE_EVENT,
+  jiraProjectSelectionCacheKey,
+  loadSelectedJiraProjectIds,
+} from "../model/jira";
 import type { RecentProject } from "../../projects/model/recents";
 import type { SessionSummary } from "../../sessions/data/sessionStore";
 import { playCue } from "../../settings/model/sounds";
@@ -167,6 +171,7 @@ export function useInboxActivity(
     let cancelled = false;
     let pulling = false;
     let pullAgain = false;
+    let jiraRevision = 0;
 
     const pull = async (force: boolean) => {
       if (pulling) {
@@ -174,6 +179,8 @@ export function useInboxActivity(
         return;
       }
       pulling = true;
+      const startedJiraRevision = jiraRevision;
+      const startedSelectionKey = jiraProjectSelectionCacheKey();
       lastPulledAt.current = Date.now();
       const projectPaths = projects.map((project) => project.path);
       const filters = pruneInboxFilters(loadInboxFilters(), projectPaths);
@@ -182,11 +189,16 @@ export function useInboxActivity(
         state: inboxFetchState(filters),
         search: "",
         linearHiddenTeamIds: loadHiddenLinearTeamIds(),
-        jiraHiddenProjectIds: loadHiddenJiraProjectIds(),
+        jiraSelectedProjectIds: loadSelectedJiraProjectIds(),
       };
       try {
         const listed = await listInboxItems(projects, query, { force });
-        if (cancelled) return;
+        if (
+          cancelled ||
+          startedJiraRevision !== jiraRevision ||
+          startedSelectionKey !== jiraProjectSelectionCacheKey()
+        )
+          return;
         const visible = applyInboxFilters(listed.items, filters, "");
         rememberNotificationProjects(
           listed.items.map(inboxNotificationProject),
@@ -305,7 +317,10 @@ export function useInboxActivity(
       if (!document.hidden) poll();
     };
     document.addEventListener("visibilitychange", onVis);
-    const onJiraChange = () => void pull(true);
+    const onJiraChange = () => {
+      jiraRevision += 1;
+      void pull(true);
+    };
     window.addEventListener(JIRA_CHANGE_EVENT, onJiraChange);
     return () => {
       cancelled = true;

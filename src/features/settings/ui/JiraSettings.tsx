@@ -7,11 +7,11 @@ import {
   disconnectJira,
   JIRA_CHANGE_EVENT,
   jiraConnected,
-  jiraProjectSelectionConfigured,
+  jiraProjectSelectionNeedsReview,
   listJiraProjects,
-  loadHiddenJiraProjectIds,
+  loadSelectedJiraProjectIds,
   notifyJiraChange,
-  saveHiddenJiraProjectIds,
+  saveSelectedJiraProjectIds,
   saveJiraConfig,
   type JiraDeployment,
   type JiraProject,
@@ -38,11 +38,12 @@ export function JiraSettings() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [projects, setProjects] = useState<JiraProject[]>([]);
-  const [hiddenIds, setHiddenIds] = useState(loadHiddenJiraProjectIds);
+  const [selectedIds, setSelectedIds] = useState(loadSelectedJiraProjectIds);
   const [projectQuery, setProjectQuery] = useState("");
   const cloud = deployment === "cloud";
 
   const loadProjects = useCallback(async () => {
+    setError(null);
     try {
       const next = await listJiraProjects();
       setProjects(next);
@@ -70,7 +71,7 @@ export function JiraSettings() {
       .finally(() => {
         if (!cancelled) setChecking(false);
       });
-    const onChange = () => setHiddenIds(loadHiddenJiraProjectIds());
+    const onChange = () => setSelectedIds(loadSelectedJiraProjectIds());
     window.addEventListener(JIRA_CHANGE_EVENT, onChange);
     return () => {
       cancelled = true;
@@ -94,12 +95,7 @@ export function JiraSettings() {
       setDeployment(deploymentOf(next));
       setToken("");
       clearInboxCache();
-      const loaded = await loadProjects();
-      // A new connection starts with nothing selected, so the inbox does not
-      // pull every project on the site before the user chooses.
-      if (!jiraProjectSelectionConfigured() && loaded.length > 0) {
-        saveHiddenJiraProjectIds(loaded.map((project) => project.id));
-      }
+      await loadProjects();
     } catch (err) {
       setError(String(err instanceof Error ? err.message : err));
     } finally {
@@ -207,7 +203,10 @@ export function JiraSettings() {
                   )
                 ) : null}
               </div>
-              <SecondaryButton onClick={() => void disconnect()} disabled={busy}>
+              <SecondaryButton
+                onClick={() => void disconnect()}
+                disabled={busy}
+              >
                 {busy ? "Disconnecting" : "Disconnect"}
               </SecondaryButton>
             </div>
@@ -261,7 +260,9 @@ export function JiraSettings() {
                   onClick={() => void openUrl(TOKEN_HELP[deployment])}
                   className="text-[12px] text-content/65 hover:text-content"
                 >
-                  {cloud ? "Create API token" : "Create a personal access token"}
+                  {cloud
+                    ? "Create API token"
+                    : "Create a personal access token"}
                 </button>
               </div>
             </form>
@@ -285,7 +286,10 @@ export function JiraSettings() {
                 disabled={busy || projects.length === 0}
                 onClick={() => {
                   clearInboxCache();
-                  saveHiddenJiraProjectIds([]);
+                  saveSelectedJiraProjectIds(
+                    projects.map((project) => project.id),
+                    status?.connectionId,
+                  );
                 }}
                 className="text-[12px] text-content/65 hover:text-content disabled:opacity-40"
               >
@@ -296,7 +300,7 @@ export function JiraSettings() {
                 disabled={busy || projects.length === 0}
                 onClick={() => {
                   clearInboxCache();
-                  saveHiddenJiraProjectIds(projects.map((project) => project.id));
+                  saveSelectedJiraProjectIds([], status?.connectionId);
                 }}
                 className="text-[12px] text-content/65 hover:text-content disabled:opacity-40"
               >
@@ -311,9 +315,12 @@ export function JiraSettings() {
             </span>
           </div>
           <p className="text-[12px] text-content/45">
+            {jiraProjectSelectionNeedsReview()
+              ? "Confirm your project selection after updating. "
+              : ""}
             Only checked projects are fetched from Jira.
             {projects.length > 0
-              ? ` ${projects.filter((project) => !hiddenIds.includes(project.id)).length} of ${projects.length} selected.`
+              ? ` ${projects.filter((project) => selectedIds.includes(project.id)).length} of ${projects.length} selected.`
               : ""}
           </p>
           <input
@@ -333,26 +340,26 @@ export function JiraSettings() {
               );
             })
             .map((project) => (
-            <label
-              key={project.id}
-              className="flex items-center gap-2 text-[13px] text-content"
-            >
-              <input
-                type="checkbox"
-                checked={!hiddenIds.includes(project.id)}
-                disabled={busy}
-                onChange={() => {
-                  const next = hiddenIds.includes(project.id)
-                    ? hiddenIds.filter((id) => id !== project.id)
-                    : [...hiddenIds, project.id];
-                  clearInboxCache();
-                  saveHiddenJiraProjectIds(next);
-                }}
-              />
-              {project.name}{" "}
-              <span className="text-content/40">{project.key}</span>
-            </label>
-          ))}
+              <label
+                key={project.id}
+                className="flex items-center gap-2 text-[13px] text-content"
+              >
+                <input
+                  type="checkbox"
+                  checked={selectedIds.includes(project.id)}
+                  disabled={busy}
+                  onChange={() => {
+                    const next = selectedIds.includes(project.id)
+                      ? selectedIds.filter((id) => id !== project.id)
+                      : [...selectedIds, project.id];
+                    clearInboxCache();
+                    saveSelectedJiraProjectIds(next, status?.connectionId);
+                  }}
+                />
+                {project.name}{" "}
+                <span className="text-content/40">{project.key}</span>
+              </label>
+            ))}
         </div>
       ) : null}
     </div>

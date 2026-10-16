@@ -32,7 +32,6 @@ import {
 import { AgentTabView } from "../../sessions/ui/AgentTabView";
 import { MarkdownPreview } from "../../sessions/ui/AgentMarkdown";
 import { BinaryFileView } from "./BinaryFileView";
-import { ReleaseNotesSurface } from "../../../app/ui/ReleaseNotesSurface";
 import { isRemoteProjectPath } from "../../projects/model/recents";
 
 const CommitDiff = lazySurface(async () => {
@@ -168,6 +167,7 @@ function FilePaneComponent({
         {pane.files.map((file) => {
           if (
             isCommitTab(file) ||
+            isReleaseNotesTab(file) ||
             isChangesTab(file) ||
             isSessionChangesTab(file) ||
             (unifiedReview && isReviewTab(file))
@@ -201,8 +201,6 @@ function FilePaneComponent({
                   onUpdatePlan={onUpdatePlan}
                   onBuildPlan={onBuildPlan}
                 />
-              ) : isReleaseNotesTab(file) ? (
-                <ReleaseNotesSurface source={file.releaseNotes} />
               ) : isTerminalTab(file) ? (
                 <TerminalView
                   id={file.id}

@@ -59,7 +59,9 @@ describe("project return snapshots", () => {
       path: "remote://env/repo/src/index.ts",
       cwd: project,
     });
-    expect(restored?.tabs[0].editorPanes[0].files[0].remoteFile).toBeUndefined();
+    expect(
+      restored?.tabs[0].editorPanes[0].files[0].remoteFile,
+    ).toBeUndefined();
     const malformed = JSON.parse(JSON.stringify(snapshot));
     malformed.tabs[0].editorPanes[0].files[0].remoteFile = { machineId: 42 };
     expect(parseWorkspaceSnapshot(malformed)).toBeNull();
@@ -383,21 +385,81 @@ describe("collectWorkspaceSnapshot", () => {
     });
   });
 
-  it("round-trips a release-note descriptor", () => {
+  it("drops a saved release-note workspace and activates the remaining tab", () => {
     const tab = newReleaseNotesWorkspaceTab({ version: "0.1.22" });
-    const snapshot = collectWorkspaceSnapshot(
-      [tab],
-      [],
-      tab.id,
-      "~",
-      new Map(),
-    );
+    const keep = newEditorWorkspaceTab(newFileTab("/tmp/a.ts", "/tmp"));
+    const snapshot = {
+      tabs: [tab, keep],
+      sessions: [],
+      activeTabId: tab.id,
+      projectCwd: "/tmp",
+    };
     const workspace = hydrateWorkspaceSnapshot(snapshot, new Map());
-
-    expect(workspace?.tabs[0]?.editorPanes[0]?.files[0]?.releaseNotes).toEqual({
-      version: "0.1.22",
-    });
+    expect(workspace?.tabs.map((entry) => entry.id)).toEqual([keep.id]);
+    expect(workspace?.activeTabId).toBe(keep.id);
     expect(workspace?.sessions).toEqual([]);
+  });
+
+  it.each([true, false])(
+    "preserves sibling files and the correct active file when release notes were active: %s",
+    (releaseActive) => {
+      const tab = newReleaseNotesWorkspaceTab({ version: "0.1.22" });
+      const pane = tab.editorPanes[0];
+      const file = newFileTab("/tmp/a.ts", "/tmp");
+      pane.files.push(file);
+      if (!releaseActive) pane.activeFileId = file.id;
+      const snapshot = {
+        tabs: [tab],
+        sessions: [],
+        activeTabId: tab.id,
+        projectCwd: "/tmp",
+      };
+      const workspace = hydrateWorkspaceSnapshot(snapshot, new Map());
+      expect(workspace?.tabs[0]?.editorPanes[0]).toMatchObject({
+        files: [file],
+        activeFileId: file.id,
+      });
+      expect(workspace?.activeTabId).toBe(tab.id);
+    },
+  );
+
+  it("closes only the release-note pane in a split and preserves its live session", () => {
+    const tab = newReleaseNotesWorkspaceTab({ version: "0.1.22" });
+    const releasePane = tab.editorPanes[0];
+    tab.layout = {
+      type: "split",
+      id: "split",
+      dir: "right",
+      sizes: [0.5, 0.5],
+      children: [leaf(releasePane.id), leaf("s1")],
+    };
+    const session = chat("s1", "/tmp");
+    const snapshot = {
+      tabs: [tab],
+      sessions: [session],
+      activeTabId: tab.id,
+      projectCwd: "/tmp",
+    };
+    const workspace = hydrateWorkspaceSnapshot(
+      snapshot,
+      new Map([[session.id, session]]),
+    );
+    expect(workspace?.tabs[0]?.layout).toEqual(leaf(session.id));
+    expect(workspace?.tabs[0]?.focusedId).toBe(session.id);
+    expect(workspace?.tabs[0]?.editorPanes).toEqual([]);
+    expect(workspace?.sessions.map((entry) => entry.id)).toEqual([session.id]);
+  });
+
+  it("does not restore a release-notes path even without its legacy descriptor", () => {
+    const tab = newReleaseNotesWorkspaceTab({ version: "0.1.22" });
+    delete tab.editorPanes[0].files[0].releaseNotes;
+    expect(
+      parseWorkspaceSnapshot({
+        tabs: [tab],
+        sessions: [],
+        activeTabId: tab.id,
+      }),
+    ).toBeNull();
   });
 
   it("stores the project terminal dock", () => {

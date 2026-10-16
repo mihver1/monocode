@@ -12,9 +12,10 @@ import {
   clearJiraCache,
   jiraConnected,
   jiraProjectIdsForFetch,
+  jiraProjectSelectionCacheKey,
   listJiraIssues,
   listJiraProjects,
-  loadHiddenJiraProjectIds,
+  loadSelectedJiraProjectIds,
   type JiraIssue,
 } from "./jira";
 import {
@@ -156,7 +157,7 @@ export type GithubWorkItemQuery = {
 
 export type InboxQuery = Omit<GithubWorkItemQuery, "kind"> & {
   linearHiddenTeamIds?: string[];
-  jiraHiddenProjectIds?: string[];
+  jiraSelectedProjectIds?: string[];
 };
 
 export type InboxProviderErrors = Partial<Record<InboxProvider, string>>;
@@ -237,8 +238,10 @@ export function inboxListCacheKey(
     .sort()
     .join("|");
   const teams = [...(query.linearHiddenTeamIds ?? [])].sort().join(",");
-  const jiraProjects = [...(query.jiraHiddenProjectIds ?? [])].sort().join(",");
-  return `${query.assignedToMe ? 1 : 0}:${query.state}:${paths}:${teams}:${jiraProjects}`;
+  const jiraProjects = [...(query.jiraSelectedProjectIds ?? [])]
+    .sort()
+    .join(",");
+  return `${query.assignedToMe ? 1 : 0}:${query.state}:${paths}:${teams}:${jiraProjects}:${jiraProjectSelectionCacheKey()}`;
 }
 
 export function peekInboxList(
@@ -692,7 +695,13 @@ export async function listInboxItems(
   if (pending) return pending;
   const generation = inboxCacheGeneration;
   const promise = fetchInboxItems(projects, query)
-    .then((result) => {
+    .then(({ jiraSelectionKey, ...result }) => {
+      if (
+        generation !== inboxCacheGeneration ||
+        jiraSelectionKey !== jiraProjectSelectionCacheKey()
+      ) {
+        throw new Error("Inbox request was superseded");
+      }
       // Keep the last GitHub snapshot usable while the backend waits for a
       // rate-limit reset. Other providers can continue refreshing normally.
       if (result.errors.github && inboxListCache?.key === key) {
@@ -709,9 +718,7 @@ export async function listInboxItems(
           ),
         };
       }
-      if (generation === inboxCacheGeneration) {
-        inboxListCache = { key, ...result, fetchedAt: Date.now() };
-      }
+      inboxListCache = { key, ...result, fetchedAt: Date.now() };
       return result;
     })
     .finally(() => {
@@ -724,7 +731,7 @@ export async function listInboxItems(
 async function fetchInboxItems(
   projects: readonly { path: string }[],
   query: InboxQuery,
-): Promise<InboxListResult> {
+): Promise<InboxListResult & { jiraSelectionKey: string }> {
   const unique = uniqueInboxProjects(projects);
   const preferredPaths = unique.map((project) => project.path);
   const discovery = await Promise.allSettled(
@@ -770,8 +777,10 @@ async function fetchInboxItems(
   }
 
   let jiraItems: InboxItem[] = [];
+  let jiraSelectionKey: string | undefined;
   try {
     if ((await jiraConnected()).connected) {
+      jiraSelectionKey = jiraProjectSelectionCacheKey();
       jiraItems = await fetchJiraInboxItems(query);
     }
   } catch (error) {
@@ -802,7 +811,14 @@ async function fetchInboxItems(
     if (azuredevops.error) errors.azuredevops = azuredevops.error;
   }
 
+  if (
+    jiraSelectionKey != null &&
+    jiraSelectionKey !== jiraProjectSelectionCacheKey()
+  ) {
+    throw new Error("Jira selection changed during Inbox refresh");
+  }
   return {
+    jiraSelectionKey: jiraSelectionKey ?? jiraProjectSelectionCacheKey(),
     items: dedupeInboxItems(
       [
         ...github.items,
@@ -931,23 +947,23 @@ function linearIssueToInboxItem(issue: LinearIssue): InboxItem {
 }
 
 async function fetchJiraInboxItems(query: InboxQuery): Promise<InboxItem[]> {
-  const hiddenIds = query.jiraHiddenProjectIds ?? loadHiddenJiraProjectIds();
+  const selectedIds = loadSelectedJiraProjectIds();
+  if (selectedIds.length === 0) return [];
+  const requested = new Set(query.jiraSelectedProjectIds ?? selectedIds);
   const projects = await listJiraProjects();
-  // null means every listed project is included. Send those ids so the search
-  // stays inside the projects the user can see, instead of the whole site.
-  const selected = jiraProjectIdsForFetch(projects, hiddenIds);
-  if (selected?.length === 0) return [];
-  const projectIds = selected ?? projects.map((project) => project.id);
-  if (projects.length > 0 && projectIds.length === 0) return [];
+  const projectIds = jiraProjectIdsForFetch(projects, selectedIds).filter(
+    (id) => requested.has(id),
+  );
+  if (projectIds.length === 0) return [];
   const issues = await listJiraIssues({
     assignedToMe: query.assignedToMe,
     state: query.state,
-    projectIds: projects.length === 0 ? [] : projectIds,
+    projectIds,
     limit: query.state === "all" ? INBOX_ALL_LIMIT : undefined,
   });
-  const hidden = new Set(hiddenIds);
+  const allowed = new Set(projectIds);
   return issues
-    .filter((issue) => hidden.size === 0 || !hidden.has(issue.teamId))
+    .filter((issue) => allowed.has(issue.teamId))
     .map(jiraIssueToInboxItem);
 }
 

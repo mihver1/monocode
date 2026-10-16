@@ -17,6 +17,8 @@ import {
   recordInboxSelfActivity,
 } from "../model/inboxSelfActivity";
 import { useInboxActivity, type InboxActivity } from "./useInboxUnseen";
+import { notifyJiraChange } from "../model/jira";
+import { InboxNotificationTracker } from "../model/inboxNotifications";
 
 const { githubWorkItem, listInboxItems, playCue } = vi.hoisted(() => ({
   githubWorkItem: vi.fn(),
@@ -67,8 +69,14 @@ let activity: InboxActivity;
 const recents = [];
 const sessions = [session];
 
-function Harness({ rows = sessions }: { rows?: SessionSummary[] }) {
-  activity = useInboxActivity(recents, "/tmp/app", rows);
+function Harness({
+  rows = sessions,
+  onAppeared,
+}: {
+  rows?: SessionSummary[];
+  onAppeared?: (items: InboxItem[]) => void;
+}) {
+  activity = useInboxActivity(recents, "/tmp/app", rows, { onAppeared });
   return null;
 }
 
@@ -98,9 +106,55 @@ afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
   clearPendingInboxSelfActivity();
+  vi.restoreAllMocks();
 });
 
 describe("Inbox activity polling", () => {
+  it("discards a late selection's response before notifications and automation observe it", async () => {
+    const jira: InboxItem = {
+      ...remote,
+      provider: "jira",
+      kind: "jira",
+      id: "10042",
+      teamId: "10000",
+      repo: "ENG",
+    };
+    const onAppeared = vi.fn();
+    const observe = vi.spyOn(InboxNotificationTracker.prototype, "observe");
+    listInboxItems.mockResolvedValueOnce({ items: [], errors: {} });
+    await act(async () => root.render(createElement(Harness, { onAppeared })));
+    let resolveOld!: (result: { items: InboxItem[]; errors: {} }) => void;
+    let resolveCurrent!: (result: { items: InboxItem[]; errors: {} }) => void;
+    listInboxItems
+      .mockImplementationOnce(
+        () =>
+          new Promise((done) => {
+            resolveOld = done;
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise((done) => {
+            resolveCurrent = done;
+          }),
+      );
+    await act(async () => notifyJiraChange());
+    expect(listInboxItems).toHaveBeenCalledTimes(2);
+    onAppeared.mockClear();
+    observe.mockClear();
+    playCue.mockClear();
+    // None (or another selection/account) arrives while the old pull is pending.
+    await act(async () => notifyJiraChange());
+    await act(async () => resolveOld({ items: [jira], errors: {} }));
+    expect(listInboxItems).toHaveBeenCalledTimes(3);
+    expect(observe).not.toHaveBeenCalled();
+    expect(onAppeared).not.toHaveBeenCalled();
+    expect(playCue).not.toHaveBeenCalled();
+    await act(async () => resolveCurrent({ items: [], errors: {} }));
+    expect(observe).toHaveBeenCalledTimes(1);
+    expect(onAppeared).toHaveBeenCalledExactlyOnceWith([]);
+  });
+
   it("updates Inbox and linked-session indicators on category changes without consuming unread activity", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-09-14T12:00:00Z"));

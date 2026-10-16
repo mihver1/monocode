@@ -147,10 +147,10 @@ import {
   jiraIssueDetails,
   jiraIssueThread,
   listJiraProjects,
-  loadHiddenJiraProjectIds,
+  loadSelectedJiraProjectIds,
   peekJiraIssueDetails,
   peekJiraIssueThread,
-  saveHiddenJiraProjectIds,
+  saveSelectedJiraProjectIds,
   type JiraIssueThread,
   type JiraProject,
 } from "../model/jira";
@@ -289,7 +289,7 @@ function peekInboxForRail(recents: RecentProject[], cwd: string) {
     state: inboxFetchState(filters),
     search: "",
     linearHiddenTeamIds: loadHiddenLinearTeamIds(),
-    jiraHiddenProjectIds: loadHiddenJiraProjectIds(),
+    jiraSelectedProjectIds: loadSelectedJiraProjectIds(),
   });
 }
 
@@ -459,8 +459,8 @@ export function InboxView({
     loadHiddenLinearTeamIds,
   );
   const [linearTeams, setLinearTeams] = useState<LinearTeam[]>([]);
-  const [jiraHiddenProjectIds, setJiraHiddenProjectIds] = useState(
-    loadHiddenJiraProjectIds,
+  const [jiraSelectedProjectIds, setJiraSelectedProjectIds] = useState(
+    loadSelectedJiraProjectIds,
   );
   const [jiraProjects, setJiraProjects] = useState<JiraProject[]>([]);
   const prevRefresh = useRef(refresh);
@@ -486,7 +486,9 @@ export function InboxView({
     activeFilters,
     source,
     linearHiddenTeamIds,
-    jiraHiddenProjectIds,
+    jiraProjects
+      .filter((project) => !jiraSelectedProjectIds.includes(project.id))
+      .map((project) => project.id),
   );
   const fetchState = inboxFetchState(activeFilters);
   const fetchQuery = useMemo<InboxQuery>(
@@ -495,13 +497,13 @@ export function InboxView({
       state: fetchState,
       search: "",
       linearHiddenTeamIds,
-      jiraHiddenProjectIds,
+      jiraSelectedProjectIds,
     }),
     [
       activeFilters.assignedToMe,
       fetchState,
       linearHiddenTeamIds,
-      jiraHiddenProjectIds,
+      jiraSelectedProjectIds,
     ],
   );
 
@@ -551,7 +553,8 @@ export function InboxView({
 
   useEffect(() => {
     const onChange = () => {
-      setJiraHiddenProjectIds(loadHiddenJiraProjectIds());
+      setJiraSelectedProjectIds(loadSelectedJiraProjectIds());
+      setJiraProjects([]);
       setRefresh((value) => value + 1);
     };
     window.addEventListener(JIRA_CHANGE_EVENT, onChange);
@@ -662,7 +665,7 @@ export function InboxView({
     };
   }, [source, linearHiddenTeamIds]);
 
-  // Same for Jira: hidden projects are excluded from the fetch itself.
+  // Jira fetches only explicitly selected projects.
   useEffect(() => {
     if (source !== "jira") return;
     let cancelled = false;
@@ -676,7 +679,7 @@ export function InboxView({
     return () => {
       cancelled = true;
     };
-  }, [source, jiraHiddenProjectIds]);
+  }, [source, jiraSelectedProjectIds]);
 
   useEffect(() => {
     const force = refresh !== prevRefresh.current;
@@ -836,7 +839,7 @@ export function InboxView({
     if (scroller) scroller.scrollTop = 0;
   }, [
     activeFilters,
-    jiraHiddenProjectIds,
+    jiraSelectedProjectIds,
     linearHiddenTeamIds,
     searchInput,
     source,
@@ -1114,12 +1117,12 @@ export function InboxView({
       linearTeams={linearTeams}
       hiddenLinearTeamIds={linearHiddenTeamIds}
       jiraProjects={jiraProjects}
-      hiddenJiraProjectIds={jiraHiddenProjectIds}
+      selectedJiraProjectIds={jiraSelectedProjectIds}
       source={source}
       filters={activeFilters}
       onChange={onFiltersChange}
       onLinearTeamsChange={saveHiddenLinearTeamIds}
-      onJiraProjectsChange={saveHiddenJiraProjectIds}
+      onJiraProjectsChange={saveSelectedJiraProjectIds}
       onClose={() => setFilterMenu(null)}
     />
   ) : null;

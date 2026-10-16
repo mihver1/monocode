@@ -5,6 +5,7 @@ use std::time::Duration;
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Manager};
 
 const HTTP_TIMEOUT: Duration = Duration::from_secs(20);
@@ -45,6 +46,7 @@ impl JiraDeployment {
 #[serde(rename_all = "camelCase")]
 pub struct JiraStatus {
     pub connected: bool,
+    pub connection_id: String,
     pub site: String,
     pub email: String,
     pub deployment: JiraDeployment,
@@ -57,6 +59,8 @@ struct JiraConfig {
     token: String,
     #[serde(default)]
     deployment: JiraDeployment,
+    #[serde(default)]
+    account_id: String,
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
@@ -172,19 +176,21 @@ pub async fn jira_set_config(
             email,
             token,
             deployment,
+            account_id: String::new(),
         };
         let myself = jira_get(&config, &format!("{}/myself", deployment.api_base()))?;
         match deployment {
             JiraDeployment::Cloud => {
-                if string_field(&myself, "accountId")
-                    .unwrap_or_default()
-                    .is_empty()
-                {
-                    return Err("Jira did not return the current user".into());
-                }
+                config.account_id = string_field(&myself, "accountId")
+                    .filter(|id| !id.trim().is_empty())
+                    .ok_or_else(|| "Jira did not return the current user".to_string())?;
             }
             JiraDeployment::DataCenter => {
                 config.email = datacenter_account(&myself)?;
+                config.account_id = string_field(&myself, "key")
+                    .or_else(|| string_field(&myself, "name"))
+                    .filter(|id| !id.trim().is_empty())
+                    .ok_or_else(|| "Jira did not return a stable account identity".to_string())?;
             }
         }
         write_config(&app, &config)?;
@@ -195,9 +201,13 @@ pub async fn jira_set_config(
 }
 
 #[tauri::command]
-pub async fn jira_list_projects(app: AppHandle) -> Result<Vec<JiraProject>, String> {
+pub async fn jira_list_projects(
+    app: AppHandle,
+    connection_id: String,
+) -> Result<Vec<JiraProject>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let config = require_config(&app)?;
+        require_connection(&config, &connection_id)?;
         list_jira_projects_for(&config)
     })
     .await
@@ -210,17 +220,21 @@ pub async fn jira_list_issues(
     assigned_to_me: bool,
     state: String,
     project_ids: Vec<String>,
+    connection_id: String,
     limit: Option<u32>,
 ) -> Result<Vec<JiraIssue>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let Some(config) = read_config(&app)? else {
             return Ok(Vec::new());
         };
-        let limit = limit.unwrap_or(DEFAULT_LIMIT).clamp(1, 100);
-        let jql = issue_jql(assigned_to_me, &state, &project_ids);
-        let (path, body) = issue_search_request(config.deployment, &jql, limit);
-        let data = jira_post(&config, path, &body)?;
-        parse_jira_issues(&data, &config.site)
+        list_jira_issues_for(
+            &config,
+            &connection_id,
+            assigned_to_me,
+            &state,
+            &project_ids,
+            limit,
+        )
     })
     .await
     .map_err(|error| error.to_string())?
@@ -294,12 +308,50 @@ pub async fn jira_issue_comment(
 fn status_for(config: Option<&JiraConfig>) -> JiraStatus {
     JiraStatus {
         connected: config.is_some(),
+        connection_id: config.map(jira_connection_id).unwrap_or_default(),
         site: config.map(|config| config.site.clone()).unwrap_or_default(),
         email: config
             .map(|config| config.email.clone())
             .unwrap_or_default(),
         deployment: config.map(|config| config.deployment).unwrap_or_default(),
     }
+}
+
+fn jira_connection_id(config: &JiraConfig) -> String {
+    // Never expose credentials. Legacy configs have no verified account ID;
+    // bind those to their credentials until the next successful reconnect.
+    let account = if config.account_id.is_empty() {
+        format!("legacy:{}:{}", config.email, config.token)
+    } else {
+        config.account_id.clone()
+    };
+    let identity = format!("{:?}\0{}\0{account}", config.deployment, config.site);
+    format!("{:x}", Sha256::digest(identity.as_bytes()))
+}
+
+fn require_connection(config: &JiraConfig, expected: &str) -> Result<(), String> {
+    if expected.is_empty() || jira_connection_id(config) != expected {
+        return Err("Jira connection changed; refresh the project selection".into());
+    }
+    Ok(())
+}
+
+fn list_jira_issues_for(
+    config: &JiraConfig,
+    connection_id: &str,
+    assigned_to_me: bool,
+    state: &str,
+    project_ids: &[String],
+    limit: Option<u32>,
+) -> Result<Vec<JiraIssue>, String> {
+    let Some(jql) = issue_jql(assigned_to_me, state, project_ids)? else {
+        return Ok(Vec::new());
+    };
+    require_connection(config, connection_id)?;
+    let limit = limit.unwrap_or(DEFAULT_LIMIT).clamp(1, 100);
+    let (path, body) = issue_search_request(config.deployment, &jql, limit);
+    let data = jira_post(config, path, &body)?;
+    parse_jira_issues(&data, &config.site)
 }
 
 /// Data Center identifies the user by username. `name` is the login; older
@@ -338,28 +390,33 @@ fn comment_request_body(deployment: JiraDeployment, body: &str) -> Value {
     }
 }
 
-fn issue_jql(assigned_to_me: bool, state: &str, project_ids: &[String]) -> String {
+fn issue_jql(
+    assigned_to_me: bool,
+    state: &str,
+    project_ids: &[String],
+) -> Result<Option<String>, String> {
+    if project_ids.is_empty() {
+        return Ok(None);
+    }
     let mut clauses = Vec::new();
     if assigned_to_me {
         clauses.push("assignee = currentUser()".to_string());
     }
-    let ids: Vec<&str> = project_ids
+    let ids: Vec<&str> = project_ids.iter().map(|id| id.trim()).collect();
+    if ids
         .iter()
-        .map(|id| id.trim())
-        .filter(|id| !id.is_empty() && id.chars().all(|ch| ch.is_ascii_digit()))
-        .collect();
-    if !ids.is_empty() {
-        clauses.push(format!("project in ({})", ids.join(", ")));
+        .any(|id| id.is_empty() || !id.chars().all(|ch| ch.is_ascii_digit()))
+    {
+        return Err("Select valid Jira project IDs".into());
     }
+    clauses.push(format!("project in ({})", ids.join(", ")));
     if !state.trim().eq_ignore_ascii_case("all") {
         clauses.push("statusCategory != Done".to_string());
     }
-    // The search endpoint rejects unbounded JQL, so an unfiltered query is
-    // limited to the last year of activity.
-    if clauses.is_empty() {
-        clauses.push("updated >= -365d".to_string());
-    }
-    format!("{} ORDER BY updated DESC", clauses.join(" AND "))
+    Ok(Some(format!(
+        "{} ORDER BY updated DESC",
+        clauses.join(" AND ")
+    )))
 }
 
 fn jira_authorization(config: &JiraConfig) -> String {
@@ -377,13 +434,32 @@ fn jira_authorization(config: &JiraConfig) -> String {
 }
 
 fn jira_get(config: &JiraConfig, path: &str) -> Result<Value, String> {
+    jira_get_typed(config, path).map_err(|error| error.message)
+}
+
+#[derive(Debug)]
+struct JiraRequestError {
+    status: Option<u16>,
+    message: String,
+}
+
+impl JiraRequestError {
+    fn other(message: impl Into<String>) -> Self {
+        Self {
+            status: None,
+            message: message.into(),
+        }
+    }
+}
+
+fn jira_get_typed(config: &JiraConfig, path: &str) -> Result<Value, JiraRequestError> {
     let agent = ureq::AgentBuilder::new().timeout(HTTP_TIMEOUT).build();
     let result = agent
         .get(&format!("{}{path}", config.site))
         .set("Authorization", &jira_authorization(config))
         .set("Accept", "application/json")
         .call();
-    read_jira_response(config.deployment, result)
+    read_jira_response_typed(config.deployment, result)
 }
 
 fn jira_post(config: &JiraConfig, path: &str, body: &Value) -> Result<Value, String> {
@@ -402,23 +478,41 @@ fn read_jira_response(
     deployment: JiraDeployment,
     result: Result<ureq::Response, ureq::Error>,
 ) -> Result<Value, String> {
+    read_jira_response_typed(deployment, result).map_err(|error| error.message)
+}
+
+fn read_jira_response_typed(
+    deployment: JiraDeployment,
+    result: Result<ureq::Response, ureq::Error>,
+) -> Result<Value, JiraRequestError> {
     let response = match result {
         Ok(response) => response,
-        Err(ureq::Error::Status(401, _)) => return Err(unauthorized_message(deployment)),
+        Err(ureq::Error::Status(401, _)) => {
+            return Err(JiraRequestError {
+                status: Some(401),
+                message: unauthorized_message(deployment),
+            })
+        }
         Err(ureq::Error::Status(status, response)) => {
             let body = response.into_string().unwrap_or_default();
-            return Err(jira_http_error(deployment, status, &body));
+            return Err(JiraRequestError {
+                status: Some(status),
+                message: jira_http_error(deployment, status, &body),
+            });
         }
-        Err(_) => return Err("Could not reach Jira".into()),
+        Err(_) => return Err(JiraRequestError::other("Could not reach Jira")),
     };
     let status = response.status();
     let body = response
         .into_string()
-        .map_err(|_| "Jira returned an unreadable response".to_string())?;
+        .map_err(|_| JiraRequestError::other("Jira returned an unreadable response"))?;
     if !(200..300).contains(&status) {
-        return Err(jira_http_error(deployment, status, &body));
+        return Err(JiraRequestError {
+            status: Some(status),
+            message: jira_http_error(deployment, status, &body),
+        });
     }
-    serde_json::from_str(&body).map_err(|_| "Jira returned invalid JSON".to_string())
+    serde_json::from_str(&body).map_err(|_| JiraRequestError::other("Jira returned invalid JSON"))
 }
 
 fn unauthorized_message(deployment: JiraDeployment) -> String {
@@ -464,22 +558,35 @@ fn jira_error_message(body: &str) -> Option<String> {
         .filter(|message| !message.is_empty())
 }
 
-/// Paginated `/project/search`, then the older `/project` array when search is
-/// missing. A failed search must not be treated as an empty allowlist.
+/// Only Data Center's first-page 404/405/501 confirms an unsupported search
+/// endpoint. Authentication, transport, JSON and later-page errors propagate.
 fn list_jira_projects_for(config: &JiraConfig) -> Result<Vec<JiraProject>, String> {
+    list_jira_projects_with(config.deployment, |path| jira_get_typed(config, path))
+}
+
+fn list_jira_projects_with(
+    deployment: JiraDeployment,
+    mut get: impl FnMut(&str) -> Result<Value, JiraRequestError>,
+) -> Result<Vec<JiraProject>, String> {
+    let mut unsupported = false;
     let searched = fetch_jira_projects(|start| {
-        jira_get(
-            config,
-            &format!(
-                "{}/project/search?maxResults=100&orderBy=name&startAt={start}",
-                config.deployment.api_base()
-            ),
-        )
+        let result = get(&format!(
+            "{}/project/search?maxResults=100&orderBy=name&startAt={start}",
+            deployment.api_base()
+        ));
+        unsupported = start == 0
+            && deployment == JiraDeployment::DataCenter
+            && result
+                .as_ref()
+                .is_err_and(|error| matches!(error.status, Some(404 | 405 | 501)));
+        result
     });
-    if let Ok(projects) = searched {
-        return Ok(projects);
+    match searched {
+        Ok(projects) => return Ok(projects),
+        Err(error) if !unsupported => return Err(error.message),
+        Err(_) => {}
     }
-    let data = jira_get(config, &format!("{}/project", config.deployment.api_base()))?;
+    let data = get(&format!("{}/project", deployment.api_base())).map_err(|error| error.message)?;
     parse_jira_project_list(&data)
 }
 
@@ -513,28 +620,35 @@ fn parse_jira_project_values(values: &[Value]) -> Vec<JiraProject> {
         .collect()
 }
 
-// Follow every page: a partial project list would silently exclude visible
-// projects when converting hidden projects into the JQL allowlist.
+// Follow every page; never present an incomplete catalog as successful discovery.
 fn fetch_jira_projects(
-    mut fetch: impl FnMut(u64) -> Result<Value, String>,
-) -> Result<Vec<JiraProject>, String> {
+    mut fetch: impl FnMut(u64) -> Result<Value, JiraRequestError>,
+) -> Result<Vec<JiraProject>, JiraRequestError> {
     let mut start = 0;
     let mut projects = Vec::new();
     loop {
         let data = fetch(start)?;
-        let page = parse_jira_projects(&data)?;
+        let page = parse_jira_projects(&data).map_err(JiraRequestError::other)?;
         let count = data["values"].as_array().map_or(0, Vec::len) as u64;
         projects.extend(page);
         if data["isLast"].as_bool() == Some(true) {
             break;
         }
-        let next = data["startAt"].as_u64().unwrap_or(start) + count;
+        let next = data["startAt"]
+            .as_u64()
+            .unwrap_or(start)
+            .checked_add(count)
+            .ok_or_else(|| JiraRequestError::other("Jira project pagination overflowed"))?;
         if data["total"].as_u64().is_some_and(|total| next >= total) {
             break;
         }
         if count == 0 || next <= start {
-            if data["isLast"].as_bool() == Some(false) {
-                return Err("Jira project pagination did not advance".into());
+            if data["isLast"].as_bool() == Some(false)
+                || data["total"].as_u64().is_some_and(|total| next < total)
+            {
+                return Err(JiraRequestError::other(
+                    "Jira project pagination did not advance",
+                ));
             }
             break;
         }
@@ -1753,6 +1867,7 @@ mod tests {
             email: "ada@acme.com".into(),
             token: "secret".into(),
             deployment: JiraDeployment::Cloud,
+            account_id: "account-ada".into(),
         };
         assert_eq!(
             jira_authorization(&config),
@@ -1767,6 +1882,7 @@ mod tests {
             email: String::new(),
             token: "pat-secret".into(),
             deployment: JiraDeployment::DataCenter,
+            account_id: "JIRAUSER1".into(),
         };
         assert_eq!(jira_authorization(&config), "Bearer pat-secret");
         assert_eq!(
@@ -1802,13 +1918,244 @@ mod tests {
     #[test]
     fn issue_jql_combines_filters() {
         assert_eq!(
-            issue_jql(true, "open", &[" 10000 ".into(), "".into(), "10001".into(), "x) OR (1".into()]),
-            "assignee = currentUser() AND project in (10000, 10001) AND statusCategory != Done ORDER BY updated DESC"
+            issue_jql(true, "open", &[" 10000 ".into(), "10001".into()]).unwrap().unwrap(),
+            "assignee = currentUser() AND project in (10000, 10001) AND statusCategory != Done ORDER BY updated DESC",
         );
         assert_eq!(
-            issue_jql(false, "all", &[]),
-            "updated >= -365d ORDER BY updated DESC"
+            issue_jql(false, "all", &["10000".into()]).unwrap().unwrap(),
+            "project in (10000) ORDER BY updated DESC",
         );
+    }
+
+    fn test_config() -> JiraConfig {
+        JiraConfig {
+            site: SITE.into(),
+            email: "ada@acme.com".into(),
+            token: "test-token".into(),
+            deployment: JiraDeployment::Cloud,
+            account_id: "account-ada".into(),
+        }
+    }
+
+    #[test]
+    fn empty_or_invalid_selection_never_searches_issues() {
+        let mut config = test_config();
+        // This cannot be contacted: the guard must return before any HTTP call.
+        config.site = "invalid://no-network".into();
+        assert_eq!(issue_jql(false, "all", &[]).unwrap(), None);
+        assert!(list_jira_issues_for(&config, "", false, "all", &[], None)
+            .unwrap()
+            .is_empty());
+        for ids in [
+            vec!["".into()],
+            vec![" ".into()],
+            vec!["x) OR (1".into()],
+            vec!["10000".into(), "oops".into()],
+        ] {
+            assert_eq!(
+                list_jira_issues_for(&config, "", false, "all", &ids, None).unwrap_err(),
+                "Select valid Jira project IDs"
+            );
+        }
+    }
+
+    #[test]
+    fn connection_identity_binds_deployment_server_and_account() {
+        let original = test_config();
+        let identity = jira_connection_id(&original);
+        let mut changed = original.clone();
+        changed.token = "rotated-token".into();
+        assert_eq!(jira_connection_id(&changed), identity);
+        changed.email = "new-display-email@acme.com".into();
+        assert_eq!(jira_connection_id(&changed), identity);
+        for config in [
+            JiraConfig {
+                deployment: JiraDeployment::DataCenter,
+                ..original.clone()
+            },
+            JiraConfig {
+                site: "https://other.atlassian.net".into(),
+                ..original.clone()
+            },
+            JiraConfig {
+                account_id: "account-other".into(),
+                ..original.clone()
+            },
+        ] {
+            assert_ne!(jira_connection_id(&config), identity);
+            assert_eq!(
+                list_jira_issues_for(&config, &identity, false, "all", &["10000".into()], None)
+                    .unwrap_err(),
+                "Jira connection changed; refresh the project selection"
+            );
+        }
+        assert!(require_connection(&original, "").is_err());
+        assert!(require_connection(&original, &identity).is_ok());
+    }
+
+    #[test]
+    fn legacy_credentials_have_separate_connection_identities() {
+        let first = JiraConfig {
+            account_id: String::new(),
+            ..test_config()
+        };
+        let second = JiraConfig {
+            token: "other-account-token".into(),
+            ..first.clone()
+        };
+        assert_ne!(jira_connection_id(&first), jira_connection_id(&second));
+        assert_ne!(
+            jira_connection_id(&first),
+            jira_connection_id(&test_config())
+        );
+    }
+
+    fn project_response(
+        deployment: JiraDeployment,
+        status: u16,
+        body: &str,
+    ) -> Result<Value, JiraRequestError> {
+        let response = ureq::Response::new(status, "Test response", body).unwrap();
+        let result = if status >= 400 {
+            Err(ureq::Error::Status(status, response))
+        } else {
+            Ok(response)
+        };
+        read_jira_response_typed(deployment, result)
+    }
+
+    #[test]
+    fn project_fallback_requires_first_page_datacenter_404_405_or_501() {
+        for deployment in [JiraDeployment::Cloud, JiraDeployment::DataCenter] {
+            for status in [404, 405, 501] {
+                let mut paths = Vec::new();
+                let result = list_jira_projects_with(deployment, |path| {
+                    paths.push(path.to_string());
+                    if path.contains("/search?") {
+                        project_response(
+                            deployment,
+                            status,
+                            r#"{"errorMessages":["Unsupported endpoint"]}"#,
+                        )
+                    } else {
+                        project_response(
+                            deployment,
+                            200,
+                            r#"[{"id":"10000","key":"ENG","name":"Engineering"}]"#,
+                        )
+                    }
+                });
+                if deployment == JiraDeployment::DataCenter {
+                    assert_eq!(result.unwrap()[0].id, "10000");
+                    assert_eq!(
+                        paths,
+                        vec![
+                            "/rest/api/2/project/search?maxResults=100&orderBy=name&startAt=0",
+                            "/rest/api/2/project"
+                        ]
+                    );
+                } else {
+                    assert_eq!(result.unwrap_err(), "Unsupported endpoint");
+                    assert_eq!(paths.len(), 1);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn project_discovery_preserves_auth_rate_limit_and_server_errors() {
+        for deployment in [JiraDeployment::Cloud, JiraDeployment::DataCenter] {
+            for status in [400, 401, 403, 408, 429, 500, 502, 503] {
+                let body = format!(r#"{{"errorMessages":["Original error {status}"]}}"#);
+                let original = project_response(deployment, status, &body).unwrap_err();
+                assert_eq!(original.status, Some(status));
+                let mut calls = 0;
+                let error = list_jira_projects_with(deployment, |_| {
+                    calls += 1;
+                    project_response(deployment, status, &body)
+                })
+                .unwrap_err();
+                assert_eq!(error, original.message);
+                assert_eq!(calls, 1, "unexpected fallback for {status}");
+            }
+        }
+    }
+
+    #[test]
+    fn project_discovery_preserves_json_shape_and_pagination_errors() {
+        for (body, expected) in [
+            ("not JSON", "Jira returned invalid JSON"),
+            ("{}", "Jira did not return projects"),
+            (
+                r#"{"values":[],"isLast":false}"#,
+                "Jira project pagination did not advance",
+            ),
+            (
+                r#"{"values":[],"total":1}"#,
+                "Jira project pagination did not advance",
+            ),
+        ] {
+            let mut calls = 0;
+            let error = list_jira_projects_with(JiraDeployment::DataCenter, |_| {
+                calls += 1;
+                project_response(JiraDeployment::DataCenter, 200, body)
+            })
+            .unwrap_err();
+            assert_eq!(error, expected);
+            assert_eq!(calls, 1);
+        }
+    }
+
+    #[test]
+    fn project_discovery_never_falls_back_after_a_successful_page() {
+        for status in [401, 403, 404, 405, 429, 501] {
+            let mut paths = Vec::new();
+            let error = list_jira_projects_with(JiraDeployment::DataCenter, |path| {
+                paths.push(path.to_string());
+                if paths.len() == 1 {
+                    project_response(
+                        JiraDeployment::DataCenter,
+                        200,
+                        r#"{"startAt":0,"isLast":false,"values":[{"id":"10000","key":"ENG"}]}"#,
+                    )
+                } else {
+                    project_response(
+                        JiraDeployment::DataCenter,
+                        status,
+                        r#"{"errorMessages":["Page two failed"]}"#,
+                    )
+                }
+            })
+            .unwrap_err();
+            let expected = if status == 401 {
+                unauthorized_message(JiraDeployment::DataCenter)
+            } else {
+                "Page two failed".into()
+            };
+            assert_eq!(error, expected);
+            assert_eq!(
+                paths,
+                vec![
+                    "/rest/api/2/project/search?maxResults=100&orderBy=name&startAt=0",
+                    "/rest/api/2/project/search?maxResults=100&orderBy=name&startAt=1"
+                ]
+            );
+        }
+    }
+
+    #[test]
+    fn project_discovery_preserves_transport_failure_without_fallback() {
+        let mut calls = 0;
+        let error = list_jira_projects_with(JiraDeployment::DataCenter, |_| {
+            calls += 1;
+            read_jira_response_typed(
+                JiraDeployment::DataCenter,
+                ureq::get("invalid://no-network").call(),
+            )
+        })
+        .unwrap_err();
+        assert_eq!(error, "Could not reach Jira");
+        assert_eq!(calls, 1);
     }
 
     #[test]
